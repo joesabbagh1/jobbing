@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Jobbing
 
-## Getting Started
+A personal job-application platform. The Grok bot posts findings here. Each job gets a page where you tailor your CV and cover letter (coming in later steps) and then apply.
 
-First, run the development server:
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local   # then fill in INGEST_API_KEY (openssl rand -hex 32)
+npx playwright-core install chromium-headless-shell   # once, for PDF export
+npm run dev                  # http://127.0.0.1:3000 (localhost only)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The SQLite database lives in `data/jobbing.db` and is created and migrated automatically on first use.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Sending jobs from the Grok bot
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`POST http://127.0.0.1:3000/api/jobs` with the header `x-api-key: <INGEST_API_KEY>`. The body is one job object or an array of up to 200 jobs.
 
-## Learn More
+```json
+{
+  "url": "https://boards.greenhouse.io/acme/jobs/123",
+  "title": "Backend Engineer",
+  "company": "Acme",
+  "location": "Remote",
+  "source": "greenhouse",
+  "description": "Full job description text (optional but recommended)",
+  "postedAt": "2026-11-01",
+  "extra": { "salary": "80k", "anything": "else" }
+}
+```
 
-To learn more about Next.js, take a look at the following resources:
+Only `url` and `title` are required. Duplicates (same URL after stripping tracking params like `utm_*`) are merged: missing fields are filled in, and your status and notes are never overwritten.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Responses: `201 {id, created: true}` for a new job, `200 {id, created: false}` for a duplicate, `200 {results: [...]}` for a batch, `401` for a wrong key, `422` with field errors for an invalid payload.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Python example:
 
-## Deploy on Vercel
+```python
+import os, requests
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+def send_job(job: dict) -> None:
+    r = requests.post(
+        "http://127.0.0.1:3000/api/jobs",
+        json=job,
+        headers={"x-api-key": os.environ["JOBBING_API_KEY"]},
+        timeout=10,
+    )
+    r.raise_for_status()
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Airtable sync (main way findings arrive)
+
+Set `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID` and `AIRTABLE_TABLE` in `.env.local`, then:
+
+```bash
+npm run sync:airtable -- --dry   # shows detected columns and mapping
+npm run sync:airtable            # imports now (the app also syncs every 5 min while running)
+```
+
+If your column names aren't detected, add them to `FIELD_CANDIDATES` in `src/lib/airtable/sync.ts`. Unmapped columns are kept in each job's `extra` field.
+
+## Job search (our own bot)
+
+The **Search** page lists the company boards (Lever, Ashby, Greenhouse, SmartRecruiters, Workable) the app checks. Each run:
+
+1. lists every open position on every active board,
+2. keeps titles matching your keywords and locations (and recent enough),
+3. has DeepSeek score each new match against the "About you" profile, and adds those at or above the minimum score.
+
+Runs every 6 hours while the app is open (`SEARCH_INTERVAL_HOURS`), only once `DEEPSEEK_API_KEY` is set. "Run search now" works any time. Jobs from Airtable that have a description get scored too.
+
+```bash
+npm run search -- --dry   # show what passes the filters, writes nothing
+npm run search            # full run
+```
+
+## CV editor
+
+**My CV** holds your master CV: import it from a PDF (DeepSeek structures it, copying your wording verbatim) or start blank. On any job page, "Tailor with AI" makes a copy and suggests edits (reorder, reword, hide to fit one page) you accept or dismiss; "Tailor manually" makes a copy you can edit without touching the master: hide bullets, reorder, reword. Both autosave and export to an ATS-friendly A4 PDF (`/api/cv/<master|jobId>/pdf`).
+
+## Cover letters
+
+On a job page, "Write with AI" drafts a 250-350 word letter in the posting's language (French or English) from the job's tailored CV (or the master), your search profile and the posting. Facts must come from your CV: numbers and technical terms that aren't in the CV, profile or posting are flagged live while you edit. Export as an A4 PDF with the same header as the CV (`/api/letter/<jobId>/pdf`).
+
+## Applying
+
+Each job page has an **Apply** card: a checklist (tailored CV, cover letter), download buttons and "Open posting". After submitting on the company's site, "Mark as applied" records how you applied and a follow-up date, and stores a frozen copy of the exact CV and letter PDFs you sent (later edits don't change them). The jobs list flags applications whose follow-up date has passed.
+
+## Development
+
+- `npm test`: unit tests (vitest)
+- `npm run db:generate`: create a migration after changing `src/db/schema.ts`
