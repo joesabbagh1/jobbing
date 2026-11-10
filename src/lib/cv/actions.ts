@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import { jobs } from "@/db/schema";
 import { isAiConfigured } from "@/lib/ai/deepseek";
-import { suggestTailoring, type TailoringResult } from "@/lib/ai/suggest-tailoring";
+import { refineSuggestion, suggestTailoring, type TailoringResult } from "@/lib/ai/suggest-tailoring";
 import { localOrigin } from "@/lib/local-origin";
 import { pdfToText, structureCv } from "./import";
 import { measurePages } from "./pdf";
@@ -20,6 +20,7 @@ import {
   saveCv,
   saveExperienceNotes,
 } from "./store";
+import type { Suggestion } from "./tailor";
 
 export type ImportState = { error?: string };
 
@@ -85,14 +86,23 @@ export async function tailorWithAi(jobId: number) {
   redirect(`/jobs/${jobId}/cv?suggest`);
 }
 
-export async function getTailoringSuggestions(
-  jobId: number,
-  cv: Cv,
-): Promise<TailoringResult | { error: string }> {
+/** The job to tailor for, or why the AI can't be asked yet. */
+function tailoringJob(jobId: number): { job: typeof jobs.$inferSelect & { description: string } } | { error: string } {
   const job = getDb().select().from(jobs).where(eq(jobs.id, jobId)).get();
   if (!job) return { error: "Job not found." };
   if (!job.description) return { error: "This job has no description yet. Paste it on the job page first." };
   if (!isAiConfigured()) return { error: "Set DEEPSEEK_API_KEY in .env.local first." };
+  return { job: { ...job, description: job.description } };
+}
+
+export async function getTailoringSuggestions(
+  jobId: number,
+  cv: Cv,
+  instructions = "",
+): Promise<TailoringResult | { error: string }> {
+  const found = tailoringJob(jobId);
+  if ("error" in found) return found;
+  const { job } = found;
   try {
     // Save what's on screen, then measure its real printed length so the AI knows how much to trim.
     const parsed = cvSchema.parse(cv);
@@ -108,6 +118,33 @@ export async function getTailoringSuggestions(
       description: job.description,
       pages,
       notes: getExperienceNotes(getDb()),
+      instructions,
+    });
+  } catch (err) {
+    return { error: `AI request failed: ${(err as Error).message}` };
+  }
+}
+
+/** Reworks one suggestion following the user's comment on it. */
+export async function refineTailoringSuggestion(
+  jobId: number,
+  cv: Cv,
+  suggestion: Suggestion,
+  comment: string,
+): Promise<{ suggestion: Suggestion } | { error: string }> {
+  if (!comment.trim()) return { error: "Write what you'd like changed." };
+  const found = tailoringJob(jobId);
+  if ("error" in found) return found;
+  const { job } = found;
+  try {
+    return await refineSuggestion({
+      cv: cvSchema.parse(cv),
+      jobTitle: job.title,
+      company: job.company,
+      description: job.description,
+      notes: getExperienceNotes(getDb()),
+      suggestion,
+      comment,
     });
   } catch (err) {
     return { error: `AI request failed: ${(err as Error).message}` };

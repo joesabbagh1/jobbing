@@ -6,8 +6,8 @@ import { type Cv, type CvBullet, newId } from "./schema";
 // the candidate's experience notes. Every operation is validated here before the user sees it.
 
 const NEW_PROJECT = "list:projects";
-/** Experience notes beyond this are cut from the prompt (~8k tokens), leaving room for the CV and posting. */
-export const MAX_NOTES_CHARS = 30_000;
+/** Experience notes beyond this are cut from the prompt (~15k tokens), leaving room for the CV and posting. */
+export const MAX_NOTES_CHARS = 60_000;
 
 export const operationSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("hide"), id: z.string(), reason: z.string().default("") }),

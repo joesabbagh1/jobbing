@@ -7,7 +7,9 @@ import {
   CheckCircle2,
   Lightbulb,
   Loader2,
+  MessageSquare,
   RefreshCw,
+  Send,
   ShieldCheck,
   Sparkles,
   Wand2,
@@ -16,8 +18,10 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import type { TailoringResult } from "@/lib/ai/suggest-tailoring";
-import { getTailoringSuggestions } from "@/lib/cv/actions";
+import { getTailoringSuggestions, refineTailoringSuggestion } from "@/lib/cv/actions";
 import type { Cv } from "@/lib/cv/schema";
 import { applyOperation, type Suggestion } from "@/lib/cv/tailor";
 
@@ -48,13 +52,16 @@ export function SuggestionsPanel({
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
+  const [instructions, setInstructions] = useState("");
+  const instructionsRef = useRef(instructions);
+  instructionsRef.current = instructions;
   const cvRef = useRef(cv);
   cvRef.current = cv;
 
   const generate = useCallback(async () => {
     setLoading(true);
     setError(undefined);
-    const res = await getTailoringSuggestions(jobId, cvRef.current);
+    const res = await getTailoringSuggestions(jobId, cvRef.current, instructionsRef.current);
     setLoading(false);
     if ("error" in res) return setError(res.error);
     setResult(res);
@@ -76,6 +83,12 @@ export function SuggestionsPanel({
   const accept = (items: Suggestion[]) => {
     onChange(items.reduce((acc, s) => applyOperation(acc, s), cvRef.current));
     setDecisions((d) => ({ ...d, ...Object.fromEntries(items.map((s) => [s.key, "accepted" as const])) }));
+  };
+
+  const refine = async (s: Suggestion, comment: string): Promise<string | undefined> => {
+    const res = await refineTailoringSuggestion(jobId, cvRef.current, s, comment);
+    if ("error" in res) return res.error;
+    setResult((r) => r && { ...r, suggestions: r.suggestions.map((x) => (x.key === s.key ? res.suggestion : x)) });
   };
 
   return (
@@ -104,6 +117,13 @@ export function SuggestionsPanel({
         </div>
       </div>
 
+      <Textarea
+        value={instructions}
+        onChange={(e) => setInstructions(e.target.value)}
+        placeholder="Instructions for the AI (optional), e.g. “keep every bullet to one line”, “don’t touch the summary”, “put the Kubernetes work first”"
+        className="mt-3 min-h-10 bg-background text-xs md:text-xs"
+      />
+
       {!result && !loading && !error && (
         <p className="mt-2 text-xs text-muted-foreground">
           DeepSeek reads the job posting and proposes edits you accept or dismiss one by one. It can hide, reorder or
@@ -131,6 +151,7 @@ export function SuggestionsPanel({
               decision={decisions[s.key]}
               onAccept={() => accept([s])}
               onDismiss={() => setDecisions((d) => ({ ...d, [s.key]: "dismissed" }))}
+              onRefine={(comment) => refine(s, comment)}
             />
           ))}
           {result.rejected.length > 0 && (
@@ -157,12 +178,32 @@ function SuggestionCard({
   decision,
   onAccept,
   onDismiss,
+  onRefine,
 }: {
   s: Suggestion;
   decision?: Decision;
   onAccept: () => void;
   onDismiss: () => void;
+  /** Resolves with an error message, or nothing once the suggestion was replaced. */
+  onRefine: (comment: string) => Promise<string | undefined>;
 }) {
+  const [commenting, setCommenting] = useState(false);
+  const [comment, setComment] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [refineError, setRefineError] = useState<string>();
+  const refinable = s.op === "rewrite" || s.op === "add" || s.op === "addProject";
+
+  const submitRefine = async () => {
+    if (!comment.trim() || refining) return;
+    setRefining(true);
+    setRefineError(undefined);
+    const err = await onRefine(comment);
+    setRefining(false);
+    if (err) return setRefineError(err);
+    setComment("");
+    setCommenting(false);
+  };
+
   if (decision) {
     return (
       <p className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
@@ -186,6 +227,12 @@ function SuggestionCard({
           <span className="truncate font-medium">{s.target}</span>
         </div>
         <div className="flex shrink-0 gap-1">
+          {refinable && (
+            <Button size="xs" variant="ghost" onClick={() => setCommenting((c) => !c)} className="text-muted-foreground">
+              <MessageSquare />
+              Refine
+            </Button>
+          )}
           <Button size="xs" variant="ghost" onClick={onDismiss} className="text-muted-foreground">
             Dismiss
           </Button>
@@ -237,6 +284,29 @@ function SuggestionCard({
         </ol>
       )}
       {s.reason && <p className="mt-2 text-xs text-muted-foreground italic">{s.reason}</p>}
+      {commenting && (
+        <form
+          className="mt-2 flex gap-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submitRefine();
+          }}
+        >
+          <Input
+            autoFocus
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="e.g. make it shorter, mention the migration, less formal"
+            className="h-7 text-xs md:text-xs"
+            disabled={refining}
+          />
+          <Button size="xs" type="submit" disabled={refining || !comment.trim()}>
+            {refining ? <Loader2 className="animate-spin" /> : <Send />}
+            {refining ? "Rewriting…" : "Send"}
+          </Button>
+        </form>
+      )}
+      {refineError && <p className="mt-1 text-xs text-destructive">{refineError}</p>}
     </div>
   );
 }
