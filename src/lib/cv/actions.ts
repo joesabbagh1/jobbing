@@ -159,6 +159,16 @@ export async function saveNotesAction(_: NotesState, formData: FormData): Promis
   return { savedAt: new Date().toISOString() };
 }
 
+/** Replaces a job's tailored CV with a fresh copy of the master and returns it. */
+export async function resetTailoredCvToMaster(jobId: number): Promise<{ cv: Cv } | { error: string }> {
+  const db = getDb();
+  const master = getMasterCv(db);
+  if (!master) return { error: "You don't have a master CV to reset to." };
+  saveCv(db, jobId, master);
+  revalidatePath(`/jobs/${jobId}`);
+  return { cv: master };
+}
+
 export async function resetTailoredCv(jobId: number) {
   deleteTailoredCv(getDb(), jobId);
   revalidatePath(`/jobs/${jobId}`);

@@ -1,12 +1,13 @@
 "use client";
 
-import { Check, Circle, CircleAlert, Download, Eye, Loader2 } from "lucide-react";
+import { Check, Circle, CircleAlert, Download, Eye, Loader2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ConfirmAction } from "@/components/confirm-action";
 import { CvTemplate } from "@/components/cv-template";
 import { AppSelect } from "@/components/app-select";
 import { ScaledPage } from "@/components/scaled-page";
 import { Button } from "@/components/ui/button";
-import { saveCvAction } from "@/lib/cv/actions";
+import { resetTailoredCvToMaster, saveCvAction } from "@/lib/cv/actions";
 import { type Cv, newId, PAPER } from "@/lib/cv/schema";
 import type { CvTarget } from "@/lib/cv/store";
 import { Field } from "./fields";
@@ -85,11 +86,43 @@ export function CvEditor({
     window.open(`/api/cv/${target}/pdf${download ? "?download" : ""}`, "_blank");
   };
 
+  // Bumped on reset so the suggestions panel starts fresh (old suggestions refer to the discarded edits).
+  const [resets, setResets] = useState(0);
+  const resetToMaster = async () => {
+    if (target === "master") return;
+    clearTimeout(timer.current);
+    const res = await resetTailoredCvToMaster(target);
+    if ("error" in res) {
+      setState("error");
+      setError(res.error);
+      return;
+    }
+    setCv(res.cv);
+    latest.current = res.cv;
+    setState("saved");
+    setError(undefined);
+    setResets((n) => n + 1);
+  };
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <SaveIndicator state={state} error={error} />
         <div className="flex items-center gap-2">
+          {target !== "master" && (
+            <ConfirmAction
+              title="Reset to your master CV?"
+              description="All edits you made to this job's CV are replaced with a fresh copy of your master CV. This can't be undone."
+              confirmLabel="Reset"
+              onConfirm={resetToMaster}
+              trigger={
+                <Button type="button" variant="outline" className="bg-background">
+                  <RotateCcw />
+                  Reset
+                </Button>
+              }
+            />
+          )}
           <AppSelect
             aria-label="Section heading language"
             value={cv.language}
@@ -124,7 +157,13 @@ export function CvEditor({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-3 pb-8">
           {target !== "master" && (
-            <SuggestionsPanel jobId={target} cv={cv} onChange={update} autoStart={autoSuggest} />
+            <SuggestionsPanel
+              key={resets}
+              jobId={target}
+              cv={cv}
+              onChange={update}
+              autoStart={autoSuggest && resets === 0}
+            />
           )}
 
           {aside && <div>{aside}</div>}
