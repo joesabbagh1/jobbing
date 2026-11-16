@@ -9,6 +9,8 @@ export const searchProfileSchema = z.object({
   titleKeywords: keywords,
   /** A job title containing any of these is dropped. */
   excludeTitleKeywords: keywords,
+  /** Postings from a company whose name contains any of these are dropped (e.g. "thales" also drops "Thales Alenia Space"). */
+  excludeCompanies: keywords.default([]),
   /** The job location must contain at least one of these (empty = any location). */
   locations: keywords,
   /** Skip postings older than this many days (when the board gives a date). */
@@ -79,6 +81,7 @@ export const DEFAULT_PROFILE: SearchProfile = {
     "buyer",
     "recruiter",
   ],
+  excludeCompanies: [],
   locations: ["paris", "île-de-france", "ile-de-france", "france", "remote", "anywhere", "europe", "emea"],
   maxAgeDays: 45,
   minScore: 60,

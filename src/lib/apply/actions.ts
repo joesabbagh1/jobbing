@@ -7,8 +7,9 @@ import { getDb } from "@/db";
 import { applications, jobs } from "@/db/schema";
 import { APPLY_CHANNELS } from "./channels";
 import { renderPdf } from "@/lib/cv/pdf";
-import { getMasterCv, getTailoredCv } from "@/lib/cv/store";
+import { getTailoredCv, masterTarget, pickMasterCv } from "@/lib/cv/store";
 import { documentFilename } from "@/lib/filename";
+import { postingLanguage } from "@/lib/letter/schema";
 import { getLetter } from "@/lib/letter/store";
 import { localOrigin } from "@/lib/local-origin";
 
@@ -33,7 +34,8 @@ export async function markApplied(jobId: number, _: ApplyState, formData: FormDa
   const job = db.select().from(jobs).where(eq(jobs.id, jobId)).get();
   if (!job) return { error: "Job not found." };
   const tailored = getTailoredCv(db, jobId);
-  const cv = tailored ?? getMasterCv(db);
+  // Without a tailored CV, the master CV in the posting's language is sent.
+  const cv = tailored ?? pickMasterCv(db, postingLanguage(job.description));
   if (!cv) return { error: "Import your CV first." };
   const letter = getLetter(db, jobId);
   const hasLetter = Boolean(letter?.body.trim());
@@ -41,7 +43,7 @@ export async function markApplied(jobId: number, _: ApplyState, formData: FormDa
   try {
     const origin = await localOrigin();
     const [cvPdf, letterPdf] = await Promise.all([
-      renderPdf(`${origin}/print/cv/${tailored ? jobId : "master"}`),
+      renderPdf(`${origin}/print/cv/${tailored ? jobId : masterTarget(cv.language)}`),
       hasLetter ? renderPdf(`${origin}/print/letter/${jobId}`) : Promise.resolve(null),
     ]);
     const letterKind = letter?.language === "fr" ? "Lettre_de_motivation" : "Cover_Letter";

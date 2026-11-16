@@ -20,10 +20,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { TailoringResult } from "@/lib/ai/suggest-tailoring";
+import type { Requirement, TailoringResult } from "@/lib/ai/suggest-tailoring";
 import { getTailoringSuggestions, refineTailoringSuggestion } from "@/lib/cv/actions";
 import type { Cv } from "@/lib/cv/schema";
 import { applyOperation, type Suggestion } from "@/lib/cv/tailor";
+import { cn } from "@/lib/utils";
 
 type Decision = "accepted" | "dismissed";
 
@@ -35,6 +36,12 @@ const OP_LABEL: Record<Suggestion["op"], string> = {
   reorder: "Reorder",
   add: "Add bullet",
   addProject: "Add project",
+};
+
+const REQUIREMENT_STATUS: Record<Requirement["status"], { label: string; className: string }> = {
+  shown: { label: "Shown", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
+  buried: { label: "Buried", className: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
+  gap: { label: "Gap", className: "bg-rose-500/15 text-rose-700 dark:text-rose-300" },
 };
 
 export function SuggestionsPanel({
@@ -126,15 +133,39 @@ export function SuggestionsPanel({
 
       {!result && !loading && !error && (
         <p className="mt-2 text-xs text-muted-foreground">
-          DeepSeek reads the job posting and proposes edits you accept or dismiss one by one. It can hide, reorder or
-          reword what&apos;s in your CV, and add bullets or projects from your experience notes (My CV page). Numbers
-          that aren&apos;t in your CV or notes are blocked.
+          DeepSeek lists what the posting wants, checks your CV against it, and proposes edits you accept or dismiss
+          one by one. It can reword, reorder or hide what&apos;s in your CV, and add bullets or projects from your
+          experience notes (My CV page). Numbers that aren&apos;t in your CV or notes are blocked.
         </p>
       )}
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
 
       {result && (
         <div className="mt-4 space-y-2">
+          {result.warning && (
+            <div className="flex gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <p>{result.warning}</p>
+            </div>
+          )}
+          {result.requirements.length > 0 && (
+            <details open className="rounded-lg border bg-background p-3 text-sm">
+              <summary className="cursor-pointer font-medium">What this posting wants</summary>
+              <ul className="mt-2 space-y-1.5">
+                {result.requirements.map((r, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs">
+                    <Badge variant="secondary" className={cn("shrink-0", REQUIREMENT_STATUS[r.status].className)}>
+                      {REQUIREMENT_STATUS[r.status].label}
+                    </Badge>
+                    <span>
+                      {r.need}
+                      {r.evidence && <span className="text-muted-foreground"> · {r.evidence}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {result.advice && (
             <div className="flex gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
               <Lightbulb className="mt-0.5 size-4 shrink-0" />
@@ -158,7 +189,8 @@ export function SuggestionsPanel({
             <details className="text-xs text-muted-foreground">
               <summary className="flex cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
                 <ShieldCheck className="size-3.5" />
-                {result.rejected.length} suggestion{result.rejected.length > 1 ? "s" : ""} blocked by safety checks
+                {result.rejected.length} suggestion{result.rejected.length > 1 ? "s" : ""} blocked or trimmed by safety
+                checks
               </summary>
               <ul className="mt-1 list-disc pl-5">
                 {result.rejected.map((r, i) => (
@@ -271,6 +303,13 @@ function SuggestionCard({
         <p className="mt-1 flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
           <AlertTriangle className="size-3.5 shrink-0" />
           Not found in your CV or notes: <strong>{s.warnings.join(", ")}</strong>. Only accept if it&apos;s true.
+        </p>
+      )}
+      {s.misplaced && s.misplaced.length > 0 && (
+        <p className="mt-1 flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          From another job or project in your CV or notes: <strong>{s.misplaced.join(", ")}</strong>. Only accept if it
+          belongs here.
         </p>
       )}
       {(s.op === "hide" || s.op === "show") && <p className="text-xs text-muted-foreground">{s.before}</p>}

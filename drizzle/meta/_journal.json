@@ -57,6 +57,13 @@
       "when": 1793720906353,
       "tag": "0007_places",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794500575468,
+      "tag": "0008_master_cv_per_language",
+      "breakpoints": true
     }
   ]
 }

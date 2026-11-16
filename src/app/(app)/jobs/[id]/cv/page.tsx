@@ -5,7 +5,7 @@ import { CvEditor } from "@/components/cv-editor/cv-editor";
 import { PageHeader } from "@/components/page-header";
 import { getDb } from "@/db";
 import { jobs } from "@/db/schema";
-import { getTailoredCv } from "@/lib/cv/store";
+import { getTailoredCv, masterLanguages } from "@/lib/cv/store";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,7 @@ export default async function TailoredCvPage({
         initial={cv}
         target={id}
         autoSuggest={autoSuggest}
+        masters={masterLanguages(db)}
         aside={
           job.description ? (
             <details className="group/jd rounded-xl border bg-card">

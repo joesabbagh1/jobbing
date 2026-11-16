@@ -15,7 +15,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ targ
   const cv = target && getCv(db, target);
   if (!target || !cv) return NextResponse.json({ error: "CV not found" }, { status: 404 });
 
-  const company = target === "master" ? undefined : db.select().from(jobs).where(eq(jobs.id, target)).get()?.company;
+  const company = typeof target === "number" ? db.select().from(jobs).where(eq(jobs.id, target)).get()?.company : undefined;
   return pdfResponse(req, `/print/cv/${raw}`, documentFilename(cv.basics.name, "CV", company));
 }
 

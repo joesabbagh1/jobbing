@@ -10,17 +10,33 @@ describe("detectLanguage", () => {
 });
 
 describe("letterWarnings", () => {
-  const vocabulary = "ingénieur devops, 7 certifications aws, kubernetes, terraform, 75 % des services, epita".toLowerCase();
+  const vocabulary = {
+    own: "ingénieur devops, 7 certifications aws, kubernetes, terraform, 75 % des services, epita, 2027",
+    posting: "nous cherchons un devops avec 3 ans d'expérience sur eks et gitlab.",
+  };
 
   it("passes a letter that only uses known facts", () => {
-    expect(letterWarnings("Madame, Monsieur,\n\nAvec 7 certifications AWS, j'ai migré 75 % des services sur Kubernetes.", vocabulary)).toEqual([]);
+    expect(
+      letterWarnings("Madame, Monsieur,\n\nAvec 7 certifications AWS, j'ai migré 75 % des services sur Kubernetes.", vocabulary),
+    ).toEqual({ unknown: [], fromPosting: [] });
   });
 
   it("flags invented numbers and unknown technical terms", () => {
-    expect(letterWarnings("J'ai réduit les coûts de 40 % avec Pulumi et Terraform.", vocabulary)).toEqual([
+    expect(letterWarnings("J'ai réduit les coûts de 40 % avec Pulumi et Terraform.", vocabulary).unknown).toEqual([
       "the number 40",
       "Pulumi",
     ]);
+  });
+
+  it("doesn't let part of a longer number back a shorter one", () => {
+    expect(letterWarnings("J'ai géré 20 clusters Kubernetes.", vocabulary).unknown).toEqual(["the number 20"]);
+  });
+
+  it("separates terms that only the posting uses", () => {
+    expect(letterWarnings("J'ai géré des clusters EKS avec Terraform pendant 3 ans.", vocabulary)).toEqual({
+      unknown: [],
+      fromPosting: ["EKS"],
+    });
   });
 });
 

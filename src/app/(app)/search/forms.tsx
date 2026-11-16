@@ -54,6 +54,9 @@ export function ProfileForm({ profile }: { profile: SearchProfile }) {
         <Field label="Skip titles containing">
           <TagInput name="excludeTitleKeywords" defaultValue={profile.excludeTitleKeywords} placeholder="e.g. senior" />
         </Field>
+        <Field label="Skip companies" hint="Matches any company whose name contains it.">
+          <TagInput name="excludeCompanies" defaultValue={profile.excludeCompanies} placeholder="e.g. thales" />
+        </Field>
         <Field label="Location must contain one of" hint="Leave empty for any location.">
           <TagInput name="locations" defaultValue={profile.locations} placeholder="Any location" />
         </Field>

@@ -25,6 +25,11 @@ export function detectLanguage(text: string): "en" | "fr" {
   return fr > en ? "fr" : "en";
 }
 
+/** The posting's language, or undefined when there's no description to tell from. */
+export function postingLanguage(description: string | null): "en" | "fr" | undefined {
+  return description?.trim() ? detectLanguage(description) : undefined;
+}
+
 /** Letter date, e.g. "2 novembre 2026" / "2 November 2026". */
 export function formatLetterDate(language: "en" | "fr", date = new Date()): string {
   return date.toLocaleDateString(language === "fr" ? "fr-FR" : "en-GB", { day: "numeric", month: "long", year: "numeric" });

@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { getDb } from "@/db";
-import { letterContext } from "@/lib/letter/context";
+import { EMPTY_CV } from "@/lib/cv/schema";
+import { letterContext, letterCv } from "@/lib/letter/context";
 import { detectLanguage } from "@/lib/letter/schema";
 import { getLetter } from "@/lib/letter/store";
 import { LetterEditor } from "./letter-editor";
@@ -44,7 +45,10 @@ export default async function CoverLetterPage({
         jobId={id}
         initial={getLetter(db, id)}
         defaultLanguage={detectLanguage(ctx.job.description ?? "")}
-        basics={ctx.cv?.basics ?? { name: "", headline: "", email: "", phone: "", location: "", links: [] }}
+        basics={{
+          fr: (letterCv(db, id, "fr") ?? EMPTY_CV).basics,
+          en: (letterCv(db, id, "en") ?? EMPTY_CV).basics,
+        }}
         company={ctx.job.company}
         vocabulary={ctx.vocabulary}
         autoGenerate={autoGenerate}

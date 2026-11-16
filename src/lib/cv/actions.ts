@@ -7,16 +7,20 @@ import { getDb } from "@/db";
 import { jobs } from "@/db/schema";
 import { isAiConfigured } from "@/lib/ai/deepseek";
 import { refineSuggestion, suggestTailoring, type TailoringResult } from "@/lib/ai/suggest-tailoring";
+import { thinPostingWarning } from "@/lib/jobs/description/quality";
 import { localOrigin } from "@/lib/local-origin";
 import { pdfToText, structureCv } from "./import";
 import { measurePages } from "./pdf";
-import { type Cv, cvSchema, EMPTY_CV, PAPER } from "./schema";
+import { type Cv, type CvLanguage, cvSchema, EMPTY_CV, LANGUAGE_NAMES, PAPER } from "./schema";
 import {
   type CvTarget,
   deleteTailoredCv,
   getExperienceNotes,
   getMasterCv,
   getTailoredCv,
+  masterTarget,
+  parseLanguage,
+  pickMasterCv,
   saveCv,
   saveExperienceNotes,
 } from "./store";
@@ -24,7 +28,10 @@ import type { Suggestion } from "./tailor";
 
 export type ImportState = { error?: string };
 
+/** Imports a PDF or pasted text as the master CV in the form's language. */
 export async function importCv(_: ImportState, formData: FormData): Promise<ImportState> {
+  const language = parseLanguage(formData.get("language"));
+  if (!language) return { error: "Choose the CV's language." };
   const file = formData.get("file");
   const pasted = String(formData.get("text") ?? "").trim();
   if (!isAiConfigured()) return { error: "Set DEEPSEEK_API_KEY in .env.local first." };
@@ -46,16 +53,25 @@ export async function importCv(_: ImportState, formData: FormData): Promise<Impo
   if (!text) return { error: "Choose a PDF or paste your CV text." };
 
   try {
-    saveCv(getDb(), "master", await structureCv(text));
+    saveCv(getDb(), masterTarget(language), await structureCv(text));
   } catch (err) {
     return { error: `AI parsing failed: ${(err as Error).message}` };
   }
   revalidatePath("/cv");
-  return {};
+  redirect(`/cv?lang=${language}`);
 }
 
-export async function startBlankCv() {
-  saveCv(getDb(), "master", EMPTY_CV);
+export async function startBlankCv(language: CvLanguage) {
+  saveCv(getDb(), masterTarget(language), EMPTY_CV);
+  revalidatePath("/cv");
+}
+
+/** Starts the master CV in `language` as a copy of the one in `from`, to translate in the editor. */
+export async function copyMasterCv(from: CvLanguage, language: CvLanguage) {
+  const db = getDb();
+  const source = getMasterCv(db, from);
+  if (!source) throw new Error(`You don't have a ${LANGUAGE_NAMES[from]} CV to copy.`);
+  saveCv(db, masterTarget(language), source);
   revalidatePath("/cv");
 }
 
@@ -66,20 +82,20 @@ export async function saveCvAction(target: CvTarget, cv: Cv): Promise<{ savedAt?
   return { savedAt: new Date().toISOString() };
 }
 
-/** Starts a job's tailored CV as a copy of the master. */
-export async function createTailoredCv(jobId: number) {
+/** Starts a job's tailored CV as a copy of the master in the form's language (or the only master there is). */
+export async function createTailoredCv(jobId: number, formData?: FormData) {
   const db = getDb();
-  const master = getMasterCv(db);
+  const master = pickMasterCv(db, parseLanguage(formData?.get("language")));
   if (!master) throw new Error("Create your master CV first.");
   saveCv(db, jobId, master);
   revalidatePath(`/jobs/${jobId}`);
 }
 
 /** Creates the tailored copy (if needed) and opens the editor with AI suggestions. */
-export async function tailorWithAi(jobId: number) {
+export async function tailorWithAi(jobId: number, formData?: FormData) {
   const db = getDb();
   if (!getTailoredCv(db, jobId)) {
-    const master = getMasterCv(db);
+    const master = pickMasterCv(db, parseLanguage(formData?.get("language")));
     if (!master) throw new Error("Create your master CV first.");
     saveCv(db, jobId, master);
   }
@@ -111,7 +127,7 @@ export async function getTailoringSuggestions(
     const pages = await measurePages(`${await localOrigin()}/print/cv/${jobId}`, paper.height - 2 * paper.margin).catch(
       () => undefined,
     );
-    return await suggestTailoring({
+    const result = await suggestTailoring({
       cv: parsed,
       jobTitle: job.title,
       company: job.company,
@@ -120,6 +136,7 @@ export async function getTailoringSuggestions(
       notes: getExperienceNotes(getDb()),
       instructions,
     });
+    return { ...result, warning: thinPostingWarning(job.description) };
   } catch (err) {
     return { error: `AI request failed: ${(err as Error).message}` };
   }
@@ -159,11 +176,14 @@ export async function saveNotesAction(_: NotesState, formData: FormData): Promis
   return { savedAt: new Date().toISOString() };
 }
 
-/** Replaces a job's tailored CV with a fresh copy of the master and returns it. */
-export async function resetTailoredCvToMaster(jobId: number): Promise<{ cv: Cv } | { error: string }> {
+/**
+ * Replaces a job's tailored CV with a fresh copy of a master CV and returns it: the one in `language`, or by default
+ * the one in the tailored CV's current language.
+ */
+export async function resetTailoredCvToMaster(jobId: number, language?: CvLanguage): Promise<{ cv: Cv } | { error: string }> {
   const db = getDb();
-  const master = getMasterCv(db);
-  if (!master) return { error: "You don't have a master CV to reset to." };
+  const master = language ? getMasterCv(db, language) : pickMasterCv(db, getTailoredCv(db, jobId)?.language);
+  if (!master) return { error: `You don't have a ${language ? `${LANGUAGE_NAMES[language]} ` : ""}master CV to reset to.` };
   saveCv(db, jobId, master);
   revalidatePath(`/jobs/${jobId}`);
   return { cv: master };

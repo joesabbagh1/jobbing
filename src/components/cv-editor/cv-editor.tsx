@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Circle, CircleAlert, Download, Eye, Loader2, RotateCcw } from "lucide-react";
+import { Check, Circle, CircleAlert, Download, Eye, Languages, Loader2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConfirmAction } from "@/components/confirm-action";
 import { CvTemplate } from "@/components/cv-template";
@@ -8,7 +8,7 @@ import { AppSelect } from "@/components/app-select";
 import { ScaledPage } from "@/components/scaled-page";
 import { Button } from "@/components/ui/button";
 import { resetTailoredCvToMaster, saveCvAction } from "@/lib/cv/actions";
-import { type Cv, newId, PAPER } from "@/lib/cv/schema";
+import { type Cv, type CvLanguage, LANGUAGE_NAMES, newId, PAPER } from "@/lib/cv/schema";
 import type { CvTarget } from "@/lib/cv/store";
 import { Field } from "./fields";
 import { BasicsEditor, BulletsEditor, ListSection } from "./sections";
@@ -21,6 +21,7 @@ export function CvEditor({
   target,
   aside,
   autoSuggest,
+  masters = [],
 }: {
   initial: Cv;
   target: CvTarget;
@@ -28,6 +29,8 @@ export function CvEditor({
   aside?: React.ReactNode;
   /** For a job's CV: fetch AI suggestions as soon as the editor opens. */
   autoSuggest?: boolean;
+  /** For a job's CV: the languages that have a master CV it can be switched to. */
+  masters?: CvLanguage[];
 }) {
   const [cv, setCv] = useState(initial);
   const [state, setState] = useState<SaveState>("saved");
@@ -88,10 +91,11 @@ export function CvEditor({
 
   // Bumped on reset so the suggestions panel starts fresh (old suggestions refer to the discarded edits).
   const [resets, setResets] = useState(0);
-  const resetToMaster = async () => {
-    if (target === "master") return;
+  /** Replaces a job's CV with a copy of the master CV in its language, or in `language`. */
+  const resetToMaster = async (language?: CvLanguage) => {
+    if (typeof target !== "number") return;
     clearTimeout(timer.current);
-    const res = await resetTailoredCvToMaster(target);
+    const res = await resetTailoredCvToMaster(target, language);
     if ("error" in res) {
       setState("error");
       setError(res.error);
@@ -109,12 +113,30 @@ export function CvEditor({
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <SaveIndicator state={state} error={error} />
         <div className="flex items-center gap-2">
-          {target !== "master" && (
+          {typeof target === "number" &&
+            masters
+              .filter((l) => l !== cv.language)
+              .map((l) => (
+                <ConfirmAction
+                  key={l}
+                  title={`Switch this job's CV to ${LANGUAGE_NAMES[l]}?`}
+                  description={`It's replaced with a copy of your ${LANGUAGE_NAMES[l]} master CV, so the edits you made for this job are lost. This can't be undone.`}
+                  confirmLabel="Switch"
+                  onConfirm={() => resetToMaster(l)}
+                  trigger={
+                    <Button type="button" variant="outline" className="bg-background">
+                      <Languages />
+                      Use {LANGUAGE_NAMES[l]} CV
+                    </Button>
+                  }
+                />
+              ))}
+          {typeof target === "number" && (
             <ConfirmAction
               title="Reset to your master CV?"
-              description="All edits you made to this job's CV are replaced with a fresh copy of your master CV. This can't be undone."
+              description={`All edits you made to this job's CV are replaced with a fresh copy of your ${LANGUAGE_NAMES[cv.language]} master CV. This can't be undone.`}
               confirmLabel="Reset"
-              onConfirm={resetToMaster}
+              onConfirm={() => resetToMaster()}
               trigger={
                 <Button type="button" variant="outline" className="bg-background">
                   <RotateCcw />
@@ -123,16 +145,6 @@ export function CvEditor({
               }
             />
           )}
-          <AppSelect
-            aria-label="Section heading language"
-            value={cv.language}
-            onValueChange={(v) => update({ ...cv, language: v as Cv["language"] })}
-            options={[
-              { value: "en", label: "English headings" },
-              { value: "fr", label: "Titres en français" },
-            ]}
-            className="bg-background"
-          />
           <AppSelect
             aria-label="Paper size"
             value={cv.paper}
@@ -156,7 +168,7 @@ export function CvEditor({
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-3 pb-8">
-          {target !== "master" && (
+          {typeof target === "number" && (
             <SuggestionsPanel
               key={resets}
               jobId={target}

@@ -26,6 +26,7 @@ export async function saveProfile(_: ActionState, formData: FormData): Promise<A
   const parsed = searchProfileSchema.safeParse({
     titleKeywords: list(formData.get("titleKeywords")),
     excludeTitleKeywords: list(formData.get("excludeTitleKeywords")),
+    excludeCompanies: list(formData.get("excludeCompanies")),
     locations: list(formData.get("locations")),
     maxAgeDays: Number(formData.get("maxAgeDays")),
     minScore: Number(formData.get("minScore")),

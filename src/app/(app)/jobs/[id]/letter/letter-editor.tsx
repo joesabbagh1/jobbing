@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Cv } from "@/lib/cv/schema";
 import { generateLetter, saveLetterAction } from "@/lib/letter/actions";
-import { letterWarnings } from "@/lib/letter/check";
+import { type LetterVocabulary, letterWarnings } from "@/lib/letter/check";
 import type { Letter } from "@/lib/letter/schema";
 import { cn } from "@/lib/utils";
 
@@ -30,16 +30,19 @@ export function LetterEditor({
   jobId: number;
   initial?: Letter;
   defaultLanguage: "en" | "fr";
-  basics: Cv["basics"];
+  /** The letter header for each language, from the CV in that language. */
+  basics: Record<Letter["language"], Cv["basics"]>;
   company: string;
-  /** Lowercased CV + profile + posting text, for live fact warnings. */
-  vocabulary: string;
+  /** What the letter may draw on, for live fact warnings. */
+  vocabulary: LetterVocabulary;
   autoGenerate?: boolean;
 }) {
   const [letter, setLetter] = useState<Letter>(initial ?? { language: defaultLanguage, subject: "", body: "" });
   const [state, setState] = useState<SaveState>("saved");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  /** A note from the last AI draft, e.g. that the posting was too short to work from. */
+  const [notice, setNotice] = useState<string>();
   const [instructions, setInstructions] = useState("");
   const latest = useRef(letter);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -72,6 +75,7 @@ export function LetterEditor({
       const res = await generateLetter(jobId, { language, instructions: extra });
       setBusy(false);
       if ("error" in res) return setError(res.error);
+      setNotice(res.warning);
       clearTimeout(timer.current);
       setLetter(res.letter);
       latest.current = res.letter;
@@ -172,9 +176,10 @@ export function LetterEditor({
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Drafted from the posting, this job&apos;s CV and your profile. Facts must come from your CV; anything that
-            doesn&apos;t is flagged below.
+            Drafted from the posting, this job&apos;s CV, your experience notes and your profile. Facts must come from
+            your CV or notes; anything that doesn&apos;t is flagged below.
           </p>
+          {notice && <p className="text-sm text-amber-700 dark:text-amber-400">{notice}</p>}
           {error && state !== "error" && <p className="text-sm text-destructive">{error}</p>}
         </section>
 
@@ -194,19 +199,29 @@ export function LetterEditor({
             placeholder="Write your letter, or let the AI draft it."
           />
         </div>
-        {warnings.length > 0 && (
+        {(warnings.unknown.length > 0 || warnings.fromPosting.length > 0) && (
           <div className="flex gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <p>
-              Not found in your CV, profile or the posting: <strong>{warnings.join(", ")}</strong>. Make sure these are true
-              before sending.
-            </p>
+            <div className="space-y-1">
+              {warnings.unknown.length > 0 && (
+                <p>
+                  Not found in your CV, notes, profile or the posting: <strong>{warnings.unknown.join(", ")}</strong>.
+                  Make sure these are true before sending.
+                </p>
+              )}
+              {warnings.fromPosting.length > 0 && (
+                <p>
+                  Only in the posting, not in your CV or notes: <strong>{warnings.fromPosting.join(", ")}</strong>. Fine
+                  when describing the role, not as your own experience.
+                </p>
+              )}
+            </div>
           </div>
         )}
       </div>
 
       <ScaledPage>
-        <LetterTemplate letter={letter} basics={basics} company={company} />
+        <LetterTemplate letter={letter} basics={basics[letter.language]} company={company} />
       </ScaledPage>
     </div>
   );

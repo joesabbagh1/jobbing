@@ -18,7 +18,10 @@ const cv = cvSchema.parse({
     },
     { id: "e2", company: "Oreyeon", role: "Front-end", bullets: [{ id: "b4", text: "Plateforme interne Next.js." }] },
   ],
-  skills: [{ id: "s1", category: "Techniques", items: "Kubernetes, AWS, Terraform, Python, React" }],
+  skills: [
+    { id: "s1", category: "Techniques", items: "Kubernetes, AWS, Terraform, Python, React" },
+    { id: "s2", category: "Sécurité", items: "Kyverno" },
+  ],
 });
 
 describe("validateOperations", () => {
@@ -43,22 +46,27 @@ describe("validateOperations", () => {
       { op: "move", id: "b3", position: 0 },
       { op: "move", id: "b1", position: 1 },
       { op: "move", id: "b4", position: 0 },
-      { op: "move", id: "e2", position: 0 },
+      { op: "move", id: "s2", position: 0 },
     ]);
     expect(suggestions.map((s) => [s.op, s.id, s.op === "reorder" ? s.order : null])).toEqual([
       ["reorder", "e1", ["b3", "b1", "b2"]],
-      ["reorder", "list:experience", ["e2", "e1"]],
+      ["reorder", "list:skills", ["s2", "s1"]],
     ]);
     const applied = suggestions.reduce((acc, s) => applyOperation(acc, s), cv);
-    expect(applied.experience.map((e) => e.id)).toEqual(["e2", "e1"]);
-    expect(applied.experience[1].bullets.map((b) => b.id)).toEqual(["b3", "b1", "b2"]);
+    expect(applied.skills.map((s) => s.id)).toEqual(["s2", "s1"]);
+    expect(applied.experience[0].bullets.map((b) => b.id)).toEqual(["b3", "b1", "b2"]);
   });
 
-  it("rejects unknown ids, invented numbers, invented skills and bad positions", () => {
+  it("keeps jobs in date order", () => {
+    const { suggestions, rejected } = validateOperations(cv, [{ op: "move", id: "e2", position: 0 }]);
+    expect(suggestions).toEqual([]);
+    expect(rejected.map((r) => r.why)).toEqual(["jobs and degrees stay in date order"]);
+  });
+
+  it("rejects unknown ids, invented numbers and bad positions", () => {
     const { suggestions, rejected } = validateOperations(cv, [
       { op: "hide", id: "nope" },
       { op: "rewrite", id: "b1", text: "CI/CD GitHub Actions pour 250 services, -40 % de temps de build." },
-      { op: "rewrite", id: "s1", text: "Kubernetes, AWS, Azure, Terraform" },
       { op: "move", id: "b1", position: 7 },
       { op: "rewrite", id: "e1", text: "Lead Engineer" },
       { op: "explode", id: "b1" },
@@ -67,11 +75,42 @@ describe("validateOperations", () => {
     expect(rejected.map((r) => r.why)).toEqual([
       "unknown id nope",
       "introduces numbers not in your CV: 250, 40",
-      "adds skills not in your CV or notes: Azure",
       "invalid position",
       "experience entries can't be rewritten",
       "malformed operation",
     ]);
+  });
+
+  it("only accepts numbers that stand on their own in the source", () => {
+    const { suggestions, rejected } = validateOperations(cv, [
+      // "10" is inside "100" and "3" opens the summary, but neither backs "10 services" here.
+      { op: "rewrite", id: "b1", text: "CI/CD GitHub Actions pour 10 services Cloud Run." },
+      { op: "rewrite", id: "b2", text: "Migration de l'infrastructure GCP vers Terraform et EC2." },
+    ]);
+    expect(rejected.map((r) => r.why)).toEqual(["introduces numbers not in your CV: 10"]);
+    expect(suggestions.map((s) => s.warnings)).toEqual([["EC2"]]); // a name with a digit is a term, not a number
+  });
+
+  it("drops invented skills from a skills rewrite and keeps the rest", () => {
+    const { suggestions, rejected } = validateOperations(cv, [
+      { op: "rewrite", id: "s1", text: "Terraform, AWS, Azure, Kubernetes, R, Python." },
+    ]);
+    expect(rejected.map((r) => r.why)).toEqual(["dropped skills not in your CV or notes: Azure, R"]);
+    expect(suggestions.map((s) => s.op === "rewrite" && s.text)).toEqual(["Terraform, AWS, Kubernetes, Python."]);
+  });
+
+  it("leaves a skill in its own group", () => {
+    const { suggestions, rejected } = validateOperations(cv, [{ op: "rewrite", id: "s1", text: "Kyverno, Terraform, AWS" }]);
+    expect(rejected.map((r) => r.why)).toEqual(["left in their own skill group: Kyverno"]);
+    expect(suggestions.map((s) => s.op === "rewrite" && s.text)).toEqual(["Terraform, AWS"]);
+  });
+
+  it("ignores the group name the model puts in front of a skills list", () => {
+    const { suggestions, rejected } = validateOperations(cv, [
+      { op: "rewrite", id: "s1", text: "Techniques: Terraform, AWS, Kubernetes" },
+    ]);
+    expect(rejected).toEqual([]);
+    expect(suggestions.map((s) => s.op === "rewrite" && s.text)).toEqual(["Terraform, AWS, Kubernetes"]);
   });
 
   it("doesn't treat digits inside item ids as known numbers", () => {
@@ -82,17 +121,13 @@ describe("validateOperations", () => {
     expect(rejected.map((r) => r.why)).toEqual(["introduces numbers not in your CV: 5"]);
   });
 
-  it("flags new technical terms but lets the headline borrow the job title", () => {
-    const { suggestions } = validateOperations(
-      cv,
-      [
-        { op: "rewrite", id: "b2", text: "Migration de l'infrastructure GCP vers Terraform et Pulumi." },
-        { op: "rewrite", id: "headline", text: "Site Reliability Engineer" },
-      ],
-      "Site Reliability Engineer",
-    );
+  it("flags new technical terms, and headline words the CV doesn't back", () => {
+    const { suggestions } = validateOperations(cv, [
+      { op: "rewrite", id: "b2", text: "Migration de l'infrastructure GCP vers Terraform et Pulumi." },
+      { op: "rewrite", id: "headline", text: "Consultant Cloud / DevOps" },
+    ]);
     expect(suggestions[0].warnings).toEqual(["Pulumi"]);
-    expect(suggestions[1].warnings).toEqual([]);
+    expect(suggestions[1].warnings).toEqual(["Consultant"]);
   });
 
   it("skips no-op operations (hiding something hidden, rewrite to same text)", () => {
@@ -115,6 +150,52 @@ describe("validateOperations", () => {
   });
 });
 
+describe("facts stay with their own job", () => {
+  const notes = [
+    "Each # section is one CV entry.",
+    "# Faradae — Cloud Engineer",
+    "- Locked down 9 public Cloud Run URLs with IAP. Fixed a broker outage in about five minutes.",
+    "# Oreyeon — Front-end",
+    "- Brought the AWS infrastructure to CMMC Level 2 across 16 accounts with Ansible.",
+  ].join("\n");
+
+  it("rejects numbers taken from another job's notes", () => {
+    const { rejected } = validateOperations(
+      cv,
+      [
+        { op: "rewrite", id: "b2", text: "Migration de l'infrastructure GCP vers Terraform sur 16 comptes." },
+        { op: "add", id: "e1", text: "Mise en conformité de 16 comptes." },
+      ],
+      notes,
+    );
+    expect(rejected.map((r) => r.why)).toEqual([
+      "introduces numbers not in your CV or notes for Faradae: 16",
+      "introduces numbers not in your notes on Faradae: 16",
+    ]);
+  });
+
+  it("accepts a number the notes spell out", () => {
+    const { suggestions, rejected } = validateOperations(cv, [{ op: "add", id: "e1", text: "Panne du broker corrigée en 5 minutes." }], notes);
+    expect(rejected).toEqual([]);
+    expect(suggestions).toHaveLength(1);
+  });
+
+  it("flags terms that belong to another job", () => {
+    const { suggestions } = validateOperations(
+      cv,
+      [
+        { op: "rewrite", id: "b2", text: "Migration de l'infrastructure GCP vers Terraform et Ansible, avec IAP." },
+        { op: "add", id: "e2", text: "Mise en conformité CMMC de l'infrastructure AWS sur 16 comptes." },
+      ],
+      notes,
+    );
+    expect(suggestions.map((s) => [s.warnings, s.misplaced ?? []])).toEqual([
+      [[], ["Ansible"]],
+      [[], []],
+    ]);
+  });
+});
+
 describe("applyOperation", () => {
   it("hides, moves and rewrites without mutating the input", () => {
     let next = applyOperation(cv, { op: "move", id: "b3", position: 0, reason: "" });
@@ -133,6 +214,10 @@ describe("applyOperation", () => {
 describe("unknownTerms", () => {
   it("ignores sentence-initial capitals and known terms", () => {
     expect(unknownTerms("Déploiement sur AWS avec Terraform et Ansible.", "aws terraform")).toEqual(["Ansible"]);
+  });
+
+  it("flags slash terms only when they hold a name", () => {
+    expect(unknownTerms("Pause/reprise des environnements et sondes liveness/readiness, avec TCP/IP.", "")).toEqual(["TCP/IP"]);
   });
 });
 
@@ -179,7 +264,6 @@ describe("additions from experience notes", () => {
         { op: "add", id: "e1", text: "Dashboard de coûts BigQuery : -18 % sur la facture GCP." },
         { op: "addProject", name: "Homelab", description: "Cluster k3s avec Cilium et Falco." },
       ],
-      "",
       notes,
     );
     expect(rejected).toEqual([]);
@@ -204,7 +288,6 @@ describe("additions from experience notes", () => {
         { op: "add", id: "b1", text: "Dashboard BigQuery." },
         { op: "addProject", name: "Homelab", description: "Cluster de 12 nœuds k3s." },
       ],
-      "",
       notes,
     );
     expect(suggestions).toEqual([]);
@@ -222,7 +305,6 @@ describe("additions from experience notes", () => {
         { op: "rewrite", id: "b2", text: "Migration de l'infrastructure GCP vers Terraform, -18 % de coûts." },
         { op: "rewrite", id: "s1", text: "Kubernetes, Cilium, Falco, Terraform" },
       ],
-      "",
       notes,
     );
     expect(rejected).toEqual([]);

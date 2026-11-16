@@ -38,7 +38,7 @@ export async function measurePages(url: string, printableHeightMm: number): Prom
   }
 }
 
-/** Prints a page of this app (e.g. /print/cv/master) to an A4 PDF. */
+/** Prints a page of this app (e.g. /print/cv/master-fr) to an A4 PDF. */
 export async function renderPdf(url: string): Promise<Buffer> {
   const browser = await getBrowser();
   const page = await browser.newPage();

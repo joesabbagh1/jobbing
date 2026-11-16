@@ -77,11 +77,11 @@ npm run search            # full run
 
 ## CV editor
 
-**My CV** holds your master CV: import it from a PDF (DeepSeek structures it, copying your wording verbatim) or start blank. On any job page, "Tailor with AI" makes a copy and suggests edits (reorder, reword, hide to fit one page) you accept or dismiss; "Tailor manually" makes a copy you can edit without touching the master: hide bullets, reorder, reword. Both autosave and export to an ATS-friendly A4 PDF (`/api/cv/<master|jobId>/pdf`).
+**My CV** holds your master CV, one per language (French and English, switched with the tabs at the top): import each from a PDF (DeepSeek structures it, copying your wording verbatim), start blank, or start the second one as a copy of the first and translate it in the editor. On any job page, "Tailor with AI" makes a copy of the master in the posting's language (pick the other one from the language menu next to the button; in the tailored editor, "Use English/French CV" switches it later), lists what the posting wants and whether your CV shows it, and suggests edits (reword, add bullets from your experience notes, reorder, hide to fit one page) you accept or dismiss. Numbers must come from the same job's CV entry or notes section, and terms borrowed from another job are flagged; "Tailor manually" makes a copy you can edit without touching the master: hide bullets, reorder, reword. Both autosave and export to an ATS-friendly A4 PDF (`/api/cv/<master-fr|master-en|jobId>/pdf`). Without a tailored CV, applying sends the master in the posting's language.
 
 ## Cover letters
 
-On a job page, "Write with AI" drafts a 250-350 word letter in the posting's language (French or English) from the job's tailored CV (or the master), your search profile and the posting. Facts must come from your CV: numbers and technical terms that aren't in the CV, profile or posting are flagged live while you edit. Export as an A4 PDF with the same header as the CV (`/api/letter/<jobId>/pdf`).
+On a job page, "Write with AI" drafts a 250-320 word letter in the posting's language (French or English) from the job's tailored CV (or the master), your experience notes, your search profile and the posting. Facts must come from your CV or notes: numbers and technical terms that aren't backed are flagged live while you edit, with terms that only the posting uses listed separately. Export as an A4 PDF with the same header as the CV (`/api/letter/<jobId>/pdf`).
 
 ## Applying
 

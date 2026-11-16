@@ -55,9 +55,15 @@ export const simpleItemSchema = z.object({
   hidden: z.boolean().default(false),
 });
 
+/** Languages a CV can be written in. There is one master CV per language. */
+export const CV_LANGUAGES = ["fr", "en"] as const;
+export type CvLanguage = (typeof CV_LANGUAGES)[number];
+
+export const LANGUAGE_NAMES: Record<CvLanguage, string> = { fr: "French", en: "English" };
+
 export const cvSchema = z.object({
-  /** Language for section headings. */
-  language: z.enum(["en", "fr"]).default("en"),
+  /** Language the CV is written in; also sets the section headings. */
+  language: z.enum(CV_LANGUAGES).default("en"),
   paper: z.enum(["a4", "letter"]).default("a4"),
   basics: z.object({
     name: text,

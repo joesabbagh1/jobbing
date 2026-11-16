@@ -16,12 +16,13 @@ export function containsKeyword(text: string, keyword: string): boolean {
   return new RegExp(`(^|[^a-z0-9])${kw}s?([^a-z0-9]|$)`).test(normalize(text));
 }
 
-export type FilterResult = { pass: true } | { pass: false; reason: "title" | "excluded" | "location" | "age" };
+export type FilterResult = { pass: true } | { pass: false; reason: "title" | "excluded" | "company" | "location" | "age" };
 
 /** Cheap checks that run before any AI call. */
 export function prefilter(p: Posting, profile: SearchProfile, now = Date.now()): FilterResult {
   if (!profile.titleKeywords.some((k) => containsKeyword(p.title, k))) return { pass: false, reason: "title" };
   if (profile.excludeTitleKeywords.some((k) => containsKeyword(p.title, k))) return { pass: false, reason: "excluded" };
+  if (profile.excludeCompanies.some((k) => containsKeyword(p.company, k))) return { pass: false, reason: "company" };
 
   if (profile.locations.length > 0 && p.location) {
     const where = `${p.location} ${p.remote ? "remote" : ""}`;

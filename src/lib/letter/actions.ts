@@ -5,8 +5,9 @@ import { redirect } from "next/navigation";
 import { getDb } from "@/db";
 import { isAiConfigured } from "@/lib/ai/deepseek";
 import { writeCoverLetter } from "@/lib/ai/write-letter";
+import { thinPostingWarning } from "@/lib/jobs/description/quality";
 import { letterContext } from "./context";
-import { detectLanguage, type Letter, letterSchema } from "./schema";
+import { type Letter, letterSchema } from "./schema";
 import { deleteLetter, saveLetter } from "./store";
 
 /** From the job page: open the letter editor and draft one straight away. */
@@ -17,9 +18,9 @@ export async function writeLetterWithAi(jobId: number) {
 export async function generateLetter(
   jobId: number,
   opts: { language?: "en" | "fr"; instructions?: string } = {},
-): Promise<{ letter: Letter } | { error: string }> {
+): Promise<{ letter: Letter; warning?: string } | { error: string }> {
   const db = getDb();
-  const ctx = letterContext(db, jobId);
+  const ctx = letterContext(db, jobId, opts.language);
   if (!ctx) return { error: "Job not found." };
   if (!ctx.cv) return { error: "Import your CV first (My CV)." };
   if (!ctx.job.description) return { error: "This job has no description yet. Paste it on the job page first." };
@@ -27,9 +28,10 @@ export async function generateLetter(
 
   try {
     const letter = await writeCoverLetter({
-      language: opts.language ?? detectLanguage(ctx.job.description),
+      language: ctx.language,
       cv: ctx.cv,
       profile: ctx.profile,
+      notes: ctx.notes,
       jobTitle: ctx.job.title,
       company: ctx.job.company,
       description: ctx.job.description,
@@ -37,7 +39,7 @@ export async function generateLetter(
     });
     saveLetter(db, jobId, letter);
     revalidatePath(`/jobs/${jobId}`);
-    return { letter };
+    return { letter, warning: thinPostingWarning(ctx.job.description) };
   } catch (err) {
     return { error: `AI request failed: ${(err as Error).message}` };
   }

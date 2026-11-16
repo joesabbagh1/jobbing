@@ -1,14 +1,25 @@
 "use client";
 
-import { FileUp, Loader2, Upload } from "lucide-react";
+import { Copy, FileUp, Loader2, Upload } from "lucide-react";
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { importCv, startBlankCv } from "@/lib/cv/actions";
+import { copyMasterCv, importCv, startBlankCv } from "@/lib/cv/actions";
+import { type CvLanguage, LANGUAGE_NAMES } from "@/lib/cv/schema";
 import { cn } from "@/lib/utils";
 
-export function ImportForm({ replacing }: { replacing?: boolean }) {
+export function ImportForm({
+  language,
+  replacing,
+  copyFrom,
+}: {
+  /** The master CV this import creates or replaces. */
+  language: CvLanguage;
+  replacing?: boolean;
+  /** A language that already has a master CV, to start this one as a copy of it. */
+  copyFrom?: CvLanguage;
+}) {
   const [state, action, pending] = useActionState(importCv, {});
   const [fileName, setFileName] = useState<string>();
   const [dragging, setDragging] = useState(false);
@@ -17,14 +28,16 @@ export function ImportForm({ replacing }: { replacing?: boolean }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Import your CV</CardTitle>
+        <CardTitle>Import your {LANGUAGE_NAMES[language]} CV</CardTitle>
         <CardDescription>
           DeepSeek splits your PDF into sections, copying your wording as-is. You can then fix anything it got wrong.
-          {replacing && " This replaces your current master CV; tailored CVs are not affected."}
+          {replacing && ` This replaces your current ${LANGUAGE_NAMES[language]} master CV; tailored CVs are not affected.`}
+          {copyFrom && ` Or start from a copy of your ${LANGUAGE_NAMES[copyFrom]} CV and translate it in the editor.`}
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form action={action} className="space-y-4">
+          <input type="hidden" name="language" value={language} />
           <label
             onDragOver={(e) => {
               e.preventDefault();
@@ -74,8 +87,26 @@ export function ImportForm({ replacing }: { replacing?: boolean }) {
               {pending ? <Loader2 className="animate-spin" /> : <Upload />}
               {pending ? "Reading your CV…" : "Import"}
             </Button>
+            {copyFrom && (
+              <Button
+                type="submit"
+                variant="outline"
+                formAction={copyMasterCv.bind(null, copyFrom, language)}
+                formNoValidate
+                disabled={pending}
+              >
+                <Copy />
+                Copy my {LANGUAGE_NAMES[copyFrom]} CV
+              </Button>
+            )}
             {!replacing && (
-              <Button type="submit" variant="ghost" formAction={startBlankCv} formNoValidate disabled={pending}>
+              <Button
+                type="submit"
+                variant="ghost"
+                formAction={startBlankCv.bind(null, language)}
+                formNoValidate
+                disabled={pending}
+              >
                 Start from a blank CV
               </Button>
             )}

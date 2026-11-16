@@ -37,6 +37,9 @@ describe("prefilter", () => {
       pass: false,
       reason: "excluded",
     });
+    expect(
+      prefilter(posting({ company: "Thales Alenia Space" }), { ...DEFAULT_PROFILE, excludeCompanies: ["thales"] }, NOW),
+    ).toEqual({ pass: false, reason: "company" });
     expect(prefilter(posting({ location: "New York, NY" }), DEFAULT_PROFILE, NOW)).toEqual({
       pass: false,
       reason: "location",

@@ -11,12 +11,12 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
-  Wand2,
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmAction } from "@/components/confirm-action";
 import { PageHeader } from "@/components/page-header";
+import { PdfPreview } from "@/components/pdf-preview";
 import { ScoreBadge } from "@/components/status-badge";
 import { SubmitButton } from "@/components/submit-button";
 import { Badge } from "@/components/ui/badge";
@@ -25,13 +25,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Textarea } from "@/components/ui/textarea";
 import { getDb } from "@/db";
 import { applications, jobs } from "@/db/schema";
-import { createTailoredCv, resetTailoredCv, tailorWithAi } from "@/lib/cv/actions";
-import { getMasterCv, getTailoredCv } from "@/lib/cv/store";
+import { resetTailoredCv } from "@/lib/cv/actions";
+import { LANGUAGE_NAMES } from "@/lib/cv/schema";
+import { getTailoredCv, masterLanguages, pickMasterCv } from "@/lib/cv/store";
 import { refetchDescription, updateJob } from "@/lib/jobs/actions";
 import { writeLetterWithAi } from "@/lib/letter/actions";
+import { postingLanguage } from "@/lib/letter/schema";
 import { getLetter } from "@/lib/letter/store";
 import { cn } from "@/lib/utils";
 import { ApplyCard } from "./apply-card";
+import { StartCvButtons } from "./start-cv-buttons";
 import { StatusSelect } from "./status-select";
 
 export const dynamic = "force-dynamic";
@@ -56,8 +59,12 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
     job.status = "reviewing";
   }
 
-  const tailored = Boolean(getTailoredCv(db, job.id));
-  const hasMaster = Boolean(getMasterCv(db));
+  const tailoredCv = getTailoredCv(db, job.id);
+  const tailored = Boolean(tailoredCv);
+  const masters = masterLanguages(db);
+  const hasMaster = masters.length > 0;
+  // A new tailored CV starts from the master CV in the posting's language, when there is one.
+  const startLanguage = pickMasterCv(db, postingLanguage(job.description))?.language;
   const letter = getLetter(db, job.id);
   const hasLetter = Boolean(letter?.body.trim());
   const application = db
@@ -250,7 +257,13 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                 <DocumentRow
                   icon={FileUser}
                   title="CV"
-                  status={tailored ? "Tailored for this job" : hasMaster ? "Master CV, not tailored yet" : "No CV imported yet"}
+                  status={
+                    tailoredCv
+                      ? `Tailored for this job · ${LANGUAGE_NAMES[tailoredCv.language]}`
+                      : hasMaster
+                        ? "Master CV, not tailored yet"
+                        : "No CV imported yet"
+                  }
                   done={tailored}
                 >
                   {tailored ? (
@@ -259,6 +272,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                         <PenLine />
                         Edit
                       </Link>
+                      <PdfPreview src={`/api/cv/${job.id}/pdf`} title={["CV", job.company].filter(Boolean).join(" · ")} />
                       <a href={`/api/cv/${job.id}/pdf?download`} className={buttonVariants({ size: "sm", variant: "outline" })}>
                         <Download />
                         PDF
@@ -275,29 +289,13 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                         }
                       />
                     </>
-                  ) : hasMaster ? (
-                    <>
-                      {job.description && (
-                        <form action={tailorWithAi.bind(null, job.id)}>
-                          <SubmitButton size="sm">
-                            <Wand2 />
-                            Tailor with AI
-                          </SubmitButton>
-                        </form>
-                      )}
-                      <form action={createTailoredCv.bind(null, job.id)}>
-                        <SubmitButton size="sm" variant="outline">
-                          {job.description ? "Manually" : "Tailor CV"}
-                        </SubmitButton>
-                      </form>
-                      <a
-                        href="/api/cv/master/pdf?download"
-                        aria-label="Download master CV"
-                        className={buttonVariants({ size: "icon-sm", variant: "ghost", className: "text-muted-foreground" })}
-                      >
-                        <Download />
-                      </a>
-                    </>
+                  ) : startLanguage ? (
+                    <StartCvButtons
+                      jobId={job.id}
+                      languages={masters}
+                      defaultLanguage={startLanguage}
+                      canTailor={Boolean(job.description)}
+                    />
                   ) : (
                     <Link href="/cv" className={buttonVariants({ size: "sm", variant: "outline" })}>
                       Import your CV
@@ -317,6 +315,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                         <PenLine />
                         Edit
                       </Link>
+                      <PdfPreview src={`/api/letter/${job.id}/pdf`} title={["Cover letter", job.company].filter(Boolean).join(" · ")} />
                       <a href={`/api/letter/${job.id}/pdf?download`} className={buttonVariants({ size: "sm", variant: "outline" })}>
                         <Download />
                         PDF

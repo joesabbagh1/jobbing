@@ -25,6 +25,7 @@ import {
 } from "@/lib/jobs/list";
 import { cn } from "@/lib/utils";
 import { JobsToolbar } from "./jobs-toolbar";
+import { RowStatusMenu } from "./row-status-menu";
 
 export const dynamic = "force-dynamic";
 
@@ -203,7 +204,7 @@ function JobsTable({
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
       {/* Fixed column widths so tables in different groups line up. */}
-      <Table className="min-w-[56rem] table-fixed">
+      <Table className="min-w-[60rem] table-fixed">
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">
             {COLUMNS.map((c) => {
@@ -229,6 +230,9 @@ function JobsTable({
                 </TableHead>
               );
             })}
+            <TableHead className="h-10 w-16 px-4">
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -265,6 +269,9 @@ function JobsTable({
                 </TableCell>
                 <TableCell className="px-4 py-3 whitespace-nowrap text-muted-foreground tabular-nums">
                   {formatDay(job.createdAt)}
+                </TableCell>
+                <TableCell className="px-4 py-2 text-right">
+                  <RowStatusMenu jobId={job.id} status={job.status} />
                 </TableCell>
               </TableRow>
             );

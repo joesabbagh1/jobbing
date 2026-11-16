@@ -40,6 +40,8 @@ export type Suggestion = Operation & {
   before: string;
   /** Terms in a rewrite that appear nowhere in the CV: the user should double-check them. */
   warnings: string[];
+  /** Terms known from another job or project, but not from the one this edit is for. */
+  misplaced?: string[];
   /** For reorders: the items' text in their new order. */
   orderPreview?: string[];
   /** For bullets: the job/project they belong to. */
@@ -127,21 +129,78 @@ export function locate(cv: Cv, id: string): Located | undefined {
   return undefined;
 }
 
-/** Lowercased text of the whole CV, used to check rewrites don't introduce new facts. */
-export function cvVocabulary(cv: Cv): string {
+/** Lowercased text of a CV or one of its entries, used to check rewrites don't introduce new facts. */
+function factText(value: unknown): string {
   // Leave out ids and flags: random ids contain digits that would make invented numbers look "known".
-  return JSON.stringify(cv, (k, v) => (k === "id" || k === "hidden" || k === "language" ? undefined : v)).toLowerCase();
+  return JSON.stringify(value, (k, v) => (k === "id" || k === "hidden" || k === "language" ? undefined : v)).toLowerCase();
 }
 
-const numbersIn = (s: string) => s.match(/\d+(?:[.,]\d+)?/g) ?? [];
+export function cvVocabulary(cv: Cv): string {
+  return factText(cv);
+}
+
+/** Standalone numbers in a text ("100", "2.5"). Digits glued to letters (EC2, K8s) are part of a name, not a number. */
+export const numbersIn = (s: string) =>
+  (s.match(/(?<![\p{L}\d])\d+(?:[.,]\d+)?(?![\p{L}\d])/gu) ?? []).map((n) => n.replace(",", "."));
+
+// Small numbers are often spelled out in notes ("fixed it in about five minutes"). One/un is left out: it's also an article.
+const NUMBER_WORDS: Record<string, string> = Object.fromEntries(
+  ["two deux", "three trois", "four quatre", "five cinq", "six", "seven sept", "eight huit", "nine neuf", "ten dix", "eleven onze", "twelve douze"]
+    .flatMap((words, i) => words.split(" ").map((w) => [w, String(i + 2)])),
+);
+
+/** Numbers in `text` that `source` doesn't contain as numbers of their own ("16" isn't backed by "2016"). */
+export function inventedNumbers(text: string, source: string): string[] {
+  const spelled = (source.toLowerCase().match(/\p{L}+/gu) ?? []).flatMap((w) => NUMBER_WORDS[w] ?? []);
+  const known = new Set([...numbersIn(source), ...spelled]);
+  return [...new Set(numbersIn(text).filter((n) => !known.has(n)))];
+}
+
+/** Whether `term` appears in the lowercased `haystack` as a whole word ("go" isn't found in "google"). */
+function hasTerm(haystack: string, term: string): boolean {
+  const escaped = term.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(haystack);
+}
+
+const splitSkills = (items: string) => items.split(",").map((s) => s.trim()).filter(Boolean);
+/** A skill as compared between lists: lowercased, without the period that may end the list. */
+const skillKey = (skill: string) => skill.replace(/\.$/, "").toLowerCase();
+
+/** The part of the notes about one CV entry: the "# ..." section whose heading names its company or project. */
+export function notesSection(notes: string, name: string): string | undefined {
+  const key = name.replace(/\(.*?\)/g, "").trim().toLowerCase();
+  if (!key) return undefined;
+  return notes
+    .split(/^(?=# )/m)
+    .find((section) => section.startsWith("# ") && section.split("\n", 1)[0].toLowerCase().includes(key));
+}
+
+/**
+ * Where one job or project's facts may come from: its own CV text plus its section of the notes.
+ * Notes without a section for it count as a whole (`scoped` is false).
+ */
+function entrySources(cv: Cv, entryId: string, notes: string): { name: string; text: string; scoped: boolean } | undefined {
+  const entry =
+    cv.experience.find((e) => e.id === entryId) ?? cv.projects.find((p) => p.id === entryId);
+  if (!entry) return undefined;
+  const name = "company" in entry ? entry.company : entry.name;
+  const section = notesSection(notes, name);
+  return { name, text: `${factText(entry)}\n${(section ?? notes).toLowerCase()}`, scoped: section !== undefined };
+}
+
+/** Words of a headline found nowhere in the CV or notes: possibly a title the candidate never held. */
+function unknownWords(text: string, vocabulary: string): string[] {
+  return [...new Set((text.match(/\p{L}{4,}/gu) ?? []).filter((w) => !vocabulary.includes(w.toLowerCase())))];
+}
 
 // Longest text accepted for one added bullet or project description (~2 printed lines).
 const MAX_ADDED_TEXT = 260;
 
-/** Printed lines an add/addProject suggestion would put on the page. */
+/** Printed lines a suggestion would add to the page: new bullets and projects, and rewrites that run longer. */
 export function addedLines(s: Suggestion): number {
   if (s.op === "add") return estimateLines(s.text);
   if (s.op === "addProject") return 2 + s.bullets.reduce((n, b) => n + estimateLines(b), 0);
+  if (s.op === "rewrite") return Math.max(0, estimateLines(s.text) - (s.before ? estimateLines(s.before) : 0));
   return 0;
 }
 
@@ -152,12 +211,29 @@ export function unknownTerms(text: string, vocabulary: string, allowed = ""): st
   for (const sentence of text.split(/(?<=[.!?:;])\s+|\n/)) {
     const words = sentence.match(/[\p{L}\p{N}][\p{L}\p{N}+#./-]*[\p{L}\p{N}+#]|[\p{L}\p{N}]/gu) ?? [];
     words.forEach((w, i) => {
-      const technical = /\d|[+#/]/.test(w) || (/^\p{Lu}/u.test(w) && i > 0) || /^\p{Lu}{2,}$/u.test(w);
+      // A slash joins plain words too ("pause/reprise"): it only makes a term technical next to a name ("CI/CD").
+      const slashName =
+        w.includes("/") && w.split("/").some((part, k) => /\d/.test(part) || (/^\p{Lu}/u.test(part) && (i > 0 || k > 0)));
+      const technical = /\d|[+#]/.test(w) || slashName || (/^\p{Lu}/u.test(w) && i > 0) || /^\p{Lu}{2,}$/u.test(w);
       const lower = w.toLowerCase();
       if (technical && w.length > 1 && !vocabulary.includes(lower) && !extra.includes(lower)) terms.add(w);
     });
   }
   return [...terms];
+}
+
+/**
+ * Technical terms in an edit that aren't backed: `warnings` appear nowhere in the CV or notes, `misplaced` only
+ * under another job or project than the one being edited.
+ */
+function termWarnings(
+  text: string,
+  vocabulary: string,
+  entry?: { text: string; scoped: boolean },
+): { warnings: string[]; misplaced: string[] } {
+  const warnings = unknownTerms(text, vocabulary);
+  const misplaced = entry?.scoped ? unknownTerms(text, entry.text).filter((t) => !warnings.includes(t)) : [];
+  return { warnings, misplaced };
 }
 
 /**
@@ -167,7 +243,6 @@ export function unknownTerms(text: string, vocabulary: string, allowed = ""): st
 export function validateOperations(
   cv: Cv,
   raw: unknown[],
-  jobTitle = "",
   notes = "",
 ): { suggestions: Suggestion[]; rejected: Rejected[] } {
   const notesText = notes.toLowerCase();
@@ -198,8 +273,8 @@ export function validateOperations(
         rejected.push({ op, why: `project ${name} is already on the CV` });
       } else if (texts.some((t) => t.length > MAX_ADDED_TEXT) || op.bullets.length > 3) {
         rejected.push({ op, why: "new project is too long" });
-      } else if (texts.flatMap(numbersIn).some((n) => !notesText.includes(n))) {
-        rejected.push({ op, why: `introduces numbers not in your notes: ${texts.flatMap(numbersIn).filter((n) => !notesText.includes(n)).join(", ")}` });
+      } else if (inventedNumbers(texts.join("\n"), notesText).length) {
+        rejected.push({ op, why: `introduces numbers not in your notes: ${inventedNumbers(texts.join("\n"), notesText).join(", ")}` });
       } else {
         seen.add(key);
         suggestions.push({
@@ -221,13 +296,14 @@ export function validateOperations(
       const text = op.text.trim();
       const parent = where?.kind === "item" && (where.list === "experience" || where.list === "projects") ? where : undefined;
       // The entry's own text counts as a source for numbers too (e.g. a team size already on the CV).
-      const sources = `${notesText}\n${parent ? JSON.stringify(cv[parent.list][parent.index]).toLowerCase() : ""}`;
-      const invented = numbersIn(text).filter((n) => !sources.includes(n));
+      const entry = parent && entrySources(cv, op.id, notes);
+      const invented = entry ? inventedNumbers(text, entry.text) : [];
       if (!notesText) rejected.push({ op, why: "new bullets need experience notes to come from" });
-      else if (!parent) rejected.push({ op, why: `bullets can only be added to a job or project, not ${op.id}` });
+      else if (!parent || !entry) rejected.push({ op, why: `bullets can only be added to a job or project, not ${op.id}` });
       else if (!text) continue;
       else if (text.length > MAX_ADDED_TEXT) rejected.push({ op, why: "new bullet is too long" });
-      else if (invented.length) rejected.push({ op, why: `introduces numbers not in your notes: ${invented.join(", ")}` });
+      else if (invented.length)
+        rejected.push({ op, why: `introduces numbers not in your notes${entry.scoped ? ` on ${entry.name}` : ""}: ${invented.join(", ")}` });
       else {
         const key = `add:${op.id}:${text.toLowerCase()}`;
         if (seen.has(key)) continue;
@@ -238,7 +314,7 @@ export function validateOperations(
           key,
           target: `${parent.label} · new bullet`,
           before: "",
-          warnings: unknownTerms(text, vocabulary),
+          ...termWarnings(text, vocabulary, entry),
           parentId: op.id,
         });
       }
@@ -255,6 +331,7 @@ export function validateOperations(
     const before =
       where.kind === "bullet" ? where.bullet.text : where.text;
     let warnings: string[] = [];
+    let misplaced: string[] = [];
 
     if (op.op === "hide" || op.op === "show") {
       if (where.kind === "field") {
@@ -271,13 +348,17 @@ export function validateOperations(
         rejected.push({ op, why: "invalid position" });
         continue;
       }
+      if (where.kind === "item" && (where.list === "experience" || where.list === "education")) {
+        rejected.push({ op, why: "jobs and degrees stay in date order" });
+        continue;
+      }
       seen.add(key);
       moves.push(op);
       continue;
     }
 
     if (op.op === "rewrite") {
-      const text = op.text.trim();
+      let text = op.text.trim();
       if (!text || text === before.trim()) continue;
       if (where.kind === "item" && !where.rewritable) {
         rejected.push({ op, why: `${where.list} entries can't be rewritten` });
@@ -287,26 +368,47 @@ export function validateOperations(
         rejected.push({ op, why: "rewrite is much longer than the original" });
         continue;
       }
-      // Numbers are facts: a rewrite may only use numbers from the original or the notes (for the summary, the CV).
-      const source = where.kind === "field" && where.field === SUMMARY ? vocabulary : `${before}\n${notesText}`;
-      const invented = numbersIn(text).filter((n) => !source.includes(n));
+      // Numbers are facts. A bullet or project description may only use numbers from its own job or project (CV and
+      // notes); the summary, headline and skills may use any from the CV or the notes.
+      const entry =
+        where.kind === "bullet"
+          ? entrySources(cv, where.parentId, notes)
+          : where.kind === "item" && where.list === "projects"
+            ? entrySources(cv, op.id, notes)
+            : undefined;
+      const invented = inventedNumbers(text, entry ? entry.text : vocabulary);
       if (invented.length) {
-        rejected.push({ op, why: `introduces numbers not in your CV: ${invented.join(", ")}` });
+        rejected.push({
+          op,
+          why: `introduces numbers not in your CV${entry?.scoped ? ` or notes for ${entry.name}` : ""}: ${invented.join(", ")}`,
+        });
         continue;
       }
-      // Skills must already be somewhere in the CV or the notes.
+      // Skills must already be somewhere in the CV or the notes: drop the ones that aren't and keep the rest.
       if (where.kind === "item" && where.list === "skills") {
-        const newSkills = text
-          .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s && !vocabulary.includes(s.toLowerCase()));
-        if (newSkills.length) {
-          rejected.push({ op, why: `adds skills not in your CV or notes: ${newSkills.join(", ")}` });
-          continue;
+        // The model tends to repeat the group's name in front of its list ("Cloud: AWS, GCP").
+        const category = cv.skills[where.index].category.trim();
+        if (category && text.toLowerCase().startsWith(`${category.toLowerCase()}:`)) text = text.slice(category.length + 1).trim();
+        if (!text || text === before.trim()) continue;
+        let skills = splitSkills(text);
+        // A skill listed in another group stays there: copied over, it would print twice.
+        const own = new Set(splitSkills(before).map(skillKey));
+        const elsewhere = new Set(cv.skills.filter((_, i) => i !== where.index).flatMap((g) => splitSkills(g.items).map(skillKey)));
+        const copied = skills.filter((s) => !own.has(skillKey(s)) && elsewhere.has(skillKey(s)));
+        const unknown = skills.filter((s) => !copied.includes(s) && !hasTerm(vocabulary, skillKey(s)));
+        if (copied.length) rejected.push({ op, why: `left in their own skill group: ${copied.join(", ")}` });
+        if (unknown.length) rejected.push({ op, why: `dropped skills not in your CV or notes: ${unknown.join(", ")}` });
+        if (copied.length || unknown.length) {
+          skills = skills.filter((s) => !copied.includes(s) && !unknown.includes(s));
+          text = skills.join(", ");
+          if (!text || text === before.trim()) continue;
         }
       }
-      // The headline may borrow the job title; other new technical terms get flagged.
-      warnings = unknownTerms(text, vocabulary, where.kind === "field" && where.field === HEADLINE ? jobTitle : "");
+      ({ warnings, misplaced } = termWarnings(text, vocabulary, entry));
+      // A headline is all claims: a title borrowed from the posting ("Consultant", "Senior") gets flagged too.
+      if (where.kind === "field" && where.field === HEADLINE) {
+        warnings = [...new Set([...unknownWords(text, vocabulary), ...warnings])];
+      }
       op.text = text;
     }
 
@@ -317,6 +419,7 @@ export function validateOperations(
       target: where.label,
       before,
       warnings,
+      ...(misplaced.length > 0 && { misplaced }),
       ...(where.kind === "bullet" && { parentId: where.parentId }),
     });
   }
