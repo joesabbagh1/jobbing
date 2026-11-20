@@ -34,3 +34,11 @@ export function postingLanguage(description: string | null): "en" | "fr" | undef
 export function formatLetterDate(language: "en" | "fr", date = new Date()): string {
   return date.toLocaleDateString(language === "fr" ? "fr-FR" : "en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
+
+/**
+ * The letter as plain text for pasting into an application form: paragraphs separated by one blank line, then the
+ * candidate's name. Copying from the PDF instead breaks every line at the page width and loses paragraph gaps.
+ */
+export function letterPlainText(letter: Pick<Letter, "body">, name?: string): string {
+  return [letter.body.trim().replace(/\n\s*\n/g, "\n\n"), name?.trim()].filter(Boolean).join("\n");
+}

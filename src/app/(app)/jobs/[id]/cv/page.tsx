@@ -9,15 +9,8 @@ import { getTailoredCv, masterLanguages } from "@/lib/cv/store";
 
 export const dynamic = "force-dynamic";
 
-export default async function TailoredCvPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ suggest?: string }>;
-}) {
+export default async function TailoredCvPage({ params }: { params: Promise<{ id: string }> }) {
   const id = Number((await params).id);
-  const autoSuggest = "suggest" in (await searchParams);
   const db = getDb();
   const job = Number.isInteger(id) ? db.select().from(jobs).where(eq(jobs.id, id)).get() : undefined;
   if (!job) notFound();
@@ -34,7 +27,6 @@ export default async function TailoredCvPage({
       <CvEditor
         initial={cv}
         target={id}
-        autoSuggest={autoSuggest}
         masters={masterLanguages(db)}
         aside={
           job.description ? (

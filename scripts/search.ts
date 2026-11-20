@@ -2,8 +2,8 @@
  * Runs the job search from the command line.
  * The app also runs it automatically every few hours.
  *
- *   npm run search            # full run: list, filter, score, add
- *   npm run search -- --dry   # list and filter only; prints what would be scored, writes nothing
+ *   npm run search            # full run: list, filter, add (unscored, for the daily ranking)
+ *   npm run search -- --dry   # list and filter only; prints what would be added, writes nothing
  */
 import { config } from "dotenv";
 import { eq } from "drizzle-orm";

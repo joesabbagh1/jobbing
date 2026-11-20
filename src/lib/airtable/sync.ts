@@ -1,5 +1,7 @@
 import Airtable from "airtable";
 import type { Db } from "@/db";
+import { rejectedPostings } from "@/db/schema";
+import { normalizeJobUrl } from "@/lib/jobs/normalize-url";
 import { upsertJob, type JobInput } from "@/lib/jobs/upsert";
 
 // Candidate Airtable column names for each job field, matched case-insensitively.
@@ -125,8 +127,14 @@ async function runSync(db: Db): Promise<SyncResult> {
     const { fetched, inputs, skipped } = await fetchAirtableJobs();
     result.fetched = fetched;
     result.skipped = skipped;
+    // Jobs removed from the list (duplicates, for instance) are remembered here and must not come back.
+    const removed = new Set(db.select({ url: rejectedPostings.url }).from(rejectedPostings).all().map((r) => r.url));
     for (const input of inputs) {
       try {
+        if (removed.has(normalizeJobUrl(input.url))) {
+          result.skipped++;
+          continue;
+        }
         if (upsertJob(db, input, "airtable").created) result.created++;
         else result.existing++;
       } catch (err) {

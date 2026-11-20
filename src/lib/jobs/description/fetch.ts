@@ -150,7 +150,7 @@ async function request(
   return res;
 }
 
-async function getText(url: string): Promise<string> {
+export async function getText(url: string): Promise<string> {
   const res = await request(url);
   const body = await res.text();
   if (body.length > MAX_BYTES) throw new DescriptionError("Page too large to process.");

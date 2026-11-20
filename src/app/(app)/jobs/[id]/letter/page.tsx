@@ -10,18 +10,11 @@ import { LetterEditor } from "./letter-editor";
 
 export const dynamic = "force-dynamic";
 
-export default async function CoverLetterPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ generate?: string }>;
-}) {
+export default async function CoverLetterPage({ params }: { params: Promise<{ id: string }> }) {
   const id = Number((await params).id);
   const db = getDb();
   const ctx = Number.isInteger(id) ? letterContext(db, id) : undefined;
   if (!ctx) notFound();
-  const autoGenerate = "generate" in (await searchParams);
 
   return (
     <div>
@@ -34,9 +27,9 @@ export default async function CoverLetterPage({
           ) : (
             <>
               <Link href="/cv" className="underline underline-offset-4">
-                Import your CV
+                Create your CV
               </Link>{" "}
-              first: the letter header and the AI draft come from it.
+              first: the letter header comes from it.
             </>
           )
         }
@@ -51,7 +44,6 @@ export default async function CoverLetterPage({
         }}
         company={ctx.job.company}
         vocabulary={ctx.vocabulary}
-        autoGenerate={autoGenerate}
       />
     </div>
   );

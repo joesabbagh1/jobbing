@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Every item that can be reordered, hidden or reworded has a stable id, so AI suggestions
+// Every item that can be reordered, hidden or reworded has a stable id, so edits
 // can reference existing content ("rewrite bullet b3") instead of inventing new content.
 const id = z.string().min(1);
 const text = z.string().default("");

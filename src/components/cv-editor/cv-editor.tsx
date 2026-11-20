@@ -12,7 +12,6 @@ import { type Cv, type CvLanguage, LANGUAGE_NAMES, newId, PAPER } from "@/lib/cv
 import type { CvTarget } from "@/lib/cv/store";
 import { Field } from "./fields";
 import { BasicsEditor, BulletsEditor, ListSection } from "./sections";
-import { SuggestionsPanel } from "./suggestions-panel";
 
 type SaveState = "saved" | "dirty" | "saving" | "error";
 
@@ -20,15 +19,12 @@ export function CvEditor({
   initial,
   target,
   aside,
-  autoSuggest,
   masters = [],
 }: {
   initial: Cv;
   target: CvTarget;
   /** Extra panel above the form, e.g. the job description when tailoring. */
   aside?: React.ReactNode;
-  /** For a job's CV: fetch AI suggestions as soon as the editor opens. */
-  autoSuggest?: boolean;
   /** For a job's CV: the languages that have a master CV it can be switched to. */
   masters?: CvLanguage[];
 }) {
@@ -89,8 +85,6 @@ export function CvEditor({
     window.open(`/api/cv/${target}/pdf${download ? "?download" : ""}`, "_blank");
   };
 
-  // Bumped on reset so the suggestions panel starts fresh (old suggestions refer to the discarded edits).
-  const [resets, setResets] = useState(0);
   /** Replaces a job's CV with a copy of the master CV in its language, or in `language`. */
   const resetToMaster = async (language?: CvLanguage) => {
     if (typeof target !== "number") return;
@@ -105,7 +99,6 @@ export function CvEditor({
     latest.current = res.cv;
     setState("saved");
     setError(undefined);
-    setResets((n) => n + 1);
   };
 
   return (
@@ -168,16 +161,6 @@ export function CvEditor({
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-3 pb-8">
-          {typeof target === "number" && (
-            <SuggestionsPanel
-              key={resets}
-              jobId={target}
-              cv={cv}
-              onChange={update}
-              autoStart={autoSuggest && resets === 0}
-            />
-          )}
-
           {aside && <div>{aside}</div>}
 
           <BasicsEditor cv={cv} set={update} />

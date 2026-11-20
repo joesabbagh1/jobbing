@@ -1,4 +1,4 @@
-import { inventedNumbers, unknownTerms } from "@/lib/cv/tailor";
+import { inventedNumbers, unknownTerms } from "@/lib/cv/facts";
 
 // Standard letter words that are capitalised but aren't claims.
 const LETTER_WORDS = "madame monsieur mesdames messieurs dear hiring team manager kind regards best cordialement sincerely";

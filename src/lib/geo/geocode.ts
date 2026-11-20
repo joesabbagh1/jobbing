@@ -1,41 +1,62 @@
 import { isNotNull } from "drizzle-orm";
-import { z } from "zod";
 import type { Db } from "@/db";
 import { jobs, type Place, places } from "@/db/schema";
-import { completeJson } from "@/lib/ai/deepseek";
 
 // Job locations are free text ("Paris, FR", "Hybrid Paris; Hybrid London", "Greater Lille Metropolitan Area").
-// The AI turns each distinct text into coordinates once; the places table remembers the answer, so the same
-// text never costs a second call.
+// OpenStreetMap's Nominatim turns each distinct text into coordinates once; the places table remembers the answer,
+// so the same text is never looked up twice.
 
 /** Lowercase, single-spaced: "Paris,  FR " and "paris, fr" share one lookup. */
 export function placeKey(location: string): string {
   return location.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-const BATCH = 40;
+// Nominatim's usage policy: at most one request per second, and a User-Agent naming the application.
+const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+const USER_AGENT = "jobbing-local/1.0 (personal job-search app)";
+const REQUEST_GAP_MS = 1100;
+// Results that cover a whole country or more: shown as "broad" instead of a pin.
+const BROAD_TYPES = new Set(["country", "continent"]);
+// Results that are a place people live or work in. Anything else (a road, a building) is a bad match, so the next,
+// shorter search text is tried instead.
+const PLACE_TYPES = new Set([
+  ...BROAD_TYPES,
+  "state", "region", "province", "county", "municipality", "city", "town", "village", "hamlet", "suburb",
+  "city_district", "district", "borough", "quarter", "neighbourhood", "locality", "isolated_dwelling", "island",
+]);
 
-const replySchema = z.object({
-  places: z.array(
-    z.object({
-      i: z.coerce.number().int(),
-      kind: z.enum(["place", "broad"]).catch("broad"),
-      label: z.string().catch(""),
-      lat: z.coerce.number().min(-90).max(90).nullable().catch(null),
-      lng: z.coerce.number().min(-180).max(180).nullable().catch(null),
-    }),
-  ),
-});
+const COUNTRY_CODES: Record<string, string> = { fr: "France", be: "Belgique", ch: "Suisse", lu: "Luxembourg", uk: "United Kingdom" };
 
-const SYSTEM = `You geocode job-posting locations for a map of France. For each numbered location text, return the single best point.
+/**
+ * Search texts to try for a location, most precise first: the first of several places, without "Hybrid"/"Remote",
+ * "Greater … Metropolitan Area", department numbers and empty parts. Empty when nothing is left (e.g. "Remote").
+ */
+export function searchTexts(location: string): string[] {
+  const first = location.split(/;|\s\|\s/)[0];
+  const parts = first
+    .replace(/\b(hybrid|remote|télétravail|full remote)\b/gi, "")
+    .replace(/\bgreater\b/gi, "")
+    .replace(/\bmetropolitan area\b|\barea\b|\bregion\b/gi, "")
+    .replace(/\(\d+\)/g, "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => COUNTRY_CODES[p.toLowerCase()] ?? p);
+  if (parts.length === 0) return [];
+  const texts = [parts.join(", ")];
+  if (parts.length > 2) texts.push(`${parts[0]}, ${parts[parts.length - 1]}`);
+  if (parts.length > 1) texts.push(parts[0]);
+  return [...new Set(texts)];
+}
 
-- A city, town, address or business district: kind "place" with its coordinates (city centre is fine) and a short label, e.g. "Paris", "Sophia-Antipolis", "La Défense".
-- A region, department or metro area ("Greater Lille Metropolitan Area", "Île-de-France", "Bouches-du-Rhône"): kind "place" at its main city, labelled with the area's usual short name.
-- Several cities: pick the one in France (the candidate lives in Paris); if none is in France, pick the first.
-- "Remote" or "Hybrid" with a city: that city.
-- Only a country, only "Remote", or several countries with no city ("France", "Anywhere in France, Belgium, Spain"): kind "broad", lat and lng null, label like "France" or "Remote (France)".
+type NominatimHit = { name: string; addresstype: string; lat: string; lon: string };
 
-Reply in JSON: {"places":[{"i": number, "kind": "place"|"broad", "label": string, "lat": number|null, "lng": number|null}]}. One entry per input, same i.`;
+async function lookup(text: string): Promise<NominatimHit | undefined> {
+  const url = `${NOMINATIM}?${new URLSearchParams({ q: text, format: "jsonv2", limit: "1", "accept-language": "fr" })}`;
+  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) throw new Error(`Nominatim ${res.status} for "${text}"`);
+  return ((await res.json()) as NominatimHit[])[0];
+}
 
 export type GeocodeResult = { looked: number; saved: number; errors: string[] };
 
@@ -46,13 +67,15 @@ export function getPlaces(db: Db): Map<string, Place> {
 
 const g = globalThis as unknown as { __geocoding?: Promise<GeocodeResult> };
 
-/** Looks up job locations that aren't in the places table yet, a batch per AI call. Concurrent calls share one run. Never throws. */
+/** Looks up job locations that aren't in the places table yet. Concurrent calls share one run. Never throws. */
 export function geocodePending(db: Db): Promise<GeocodeResult> {
   g.__geocoding ??= run(db).finally(() => {
     g.__geocoding = undefined;
   });
   return g.__geocoding;
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function run(db: Db): Promise<GeocodeResult> {
   const known = getPlaces(db);
@@ -63,37 +86,37 @@ async function run(db: Db): Promise<GeocodeResult> {
   }
 
   const result: GeocodeResult = { looked: pending.size, saved: 0, errors: [] };
-  const entries = [...pending];
-  for (let start = 0; start < entries.length; start += BATCH) {
-    const batch = entries.slice(start, start + BATCH);
+  let requests = 0;
+  for (const [key, text] of pending) {
+    let place: { kind: "place" | "broad"; label: string; lat: number | null; lng: number | null };
     try {
-      const reply = await completeJson({
-        system: SYSTEM,
-        user: batch.map(([, text], i) => `${i}. ${text}`).join("\n"),
-        schema: replySchema,
-        temperature: 0,
-      });
-      for (const p of reply.places) {
-        const entry = batch[p.i];
-        if (!entry) continue;
-        const pinned = p.kind === "place" && p.lat !== null && p.lng !== null;
-        // A "place" without coordinates is left out, so it's asked again next time.
-        if (p.kind === "place" && !pinned) continue;
-        db.insert(places)
-          .values({
-            query: entry[0],
-            kind: p.kind,
-            label: p.label.trim() || entry[1],
-            lat: pinned ? p.lat : null,
-            lng: pinned ? p.lng : null,
-          })
-          .onConflictDoNothing()
-          .run();
-        result.saved++;
+      let hit: NominatimHit | undefined;
+      for (const q of searchTexts(text)) {
+        if (requests++ > 0) await sleep(REQUEST_GAP_MS);
+        const found = await lookup(q);
+        if (found && PLACE_TYPES.has(found.addresstype)) {
+          hit = found;
+          break;
+        }
+      }
+      if (!hit) {
+        // Nothing found ("Remote", "Anywhere in Europe"): listed off the map, not looked up again.
+        place = { kind: "broad", label: /remote|télétravail/i.test(text) ? "Remote" : text, lat: null, lng: null };
+      } else if (BROAD_TYPES.has(hit.addresstype)) {
+        place = { kind: "broad", label: hit.name, lat: null, lng: null };
+      } else {
+        place = { kind: "place", label: hit.name || text, lat: Number(hit.lat), lng: Number(hit.lon) };
       }
     } catch (err) {
+      // Network or service errors leave the text out, so it's tried again next time.
       result.errors.push(`Geocoding: ${(err as Error).message.split("\n")[0]}`);
+      continue;
     }
+    db.insert(places)
+      .values({ query: key, ...place })
+      .onConflictDoNothing()
+      .run();
+    result.saved++;
   }
   return result;
 }

@@ -3,13 +3,13 @@ import type { Db } from "@/db";
 import { jobs } from "@/db/schema";
 import { CV_LANGUAGES, type Cv, type CvLanguage } from "@/lib/cv/schema";
 import { getExperienceNotes, getMasterCv, getTailoredCv, pickMasterCv } from "@/lib/cv/store";
-import { cvVocabulary } from "@/lib/cv/tailor";
+import { cvVocabulary } from "@/lib/cv/facts";
 import { getSearchProfile } from "@/lib/search/profile";
 import { detectLanguage } from "./schema";
 import { getLetter } from "./store";
 
 /**
- * The CV a letter in `language` goes with (its header and the facts the AI draws on): the job's tailored CV when it's
+ * The CV a letter in `language` goes with (its header and the facts it may state): the job's tailored CV when it's
  * in that language, else the master CV in that language, else whichever exists.
  */
 export function letterCv(db: Db, jobId: number, language: CvLanguage): Cv | undefined {

@@ -50,7 +50,7 @@ describe("prefilter", () => {
     });
   });
 
-  it("lets remote postings through on location so the AI can judge them", () => {
+  it("lets remote postings through on location so they can be judged by hand", () => {
     expect(prefilter(posting({ location: "Berlin", remote: true }), DEFAULT_PROFILE, NOW).pass).toBe(true);
   });
 });

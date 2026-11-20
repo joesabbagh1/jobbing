@@ -5,9 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { JOB_STATUSES, jobs } from "@/db/schema";
-import { isAiConfigured } from "@/lib/ai/deepseek";
 import { syncAirtable } from "@/lib/airtable/sync";
-import { rescoreJob } from "@/lib/search/run";
 import { enrichJob, enrichPending } from "./description/enrich";
 
 export async function syncNow() {
@@ -49,7 +47,7 @@ export async function updateJob(id: number, formData: FormData) {
       descriptionSource: "manual",
       descriptionError: null,
     }),
-    // The old score was judged on other text (or the Airtable notes), so it's dropped and redone.
+    // The old score was judged on other text (or the Airtable notes), so it's dropped, to be ranked again.
     ...(descriptionChanged && { matchScore: null, analysis: null }),
   };
   if (Object.keys(patch).length === 0) return;
@@ -60,12 +58,6 @@ export async function updateJob(id: number, formData: FormData) {
     .run();
   revalidatePath("/");
   revalidatePath(`/jobs/${id}`);
-
-  // Scoring takes a few seconds; the new score shows on the next page load. If it fails, the next
-  // Airtable sync or search run picks the job up again since it has no score.
-  if (descriptionChanged && isAiConfigured()) {
-    void rescoreJob(db, id).catch((err) => console.error(`[score] rescoring #${id} failed: ${(err as Error).message}`));
-  }
 }
 
 export async function setJobStatus(id: number, status: (typeof JOB_STATUSES)[number]) {

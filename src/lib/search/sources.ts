@@ -1,6 +1,8 @@
 import type { AtsType, Company } from "@/db/schema";
-import { getJson, postJson } from "@/lib/jobs/description/fetch";
+import { parseHTML } from "linkedom";
+import { fetchDescription, getJson, getText, postJson } from "@/lib/jobs/description/fetch";
 import {
+  htmlToText,
   parseAshby,
   parseGreenhouse,
   parseLever,
@@ -141,12 +143,119 @@ const listWorkable: Lister = async (slug, company) => {
   }));
 };
 
+const FRENCH_MONTHS = [
+  "janvier", "février", "mars", "avril", "mai", "juin",
+  "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+];
+
+/** "vendredi 13 novembre 2026" → "2026-11-13" (Lucca shows dates in the board's language). */
+export function parseFrenchDate(text: string): string | undefined {
+  const m = text.toLowerCase().match(/(\d{1,2})\s+([a-zéû]+)\s+(\d{4})/);
+  const month = m ? FRENCH_MONTHS.indexOf(m[2]) : -1;
+  if (!m || month < 0) {
+    const d = Date.parse(text);
+    return Number.isNaN(d) ? undefined : new Date(d).toISOString();
+  }
+  return `${m[3]}-${String(month + 1).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+}
+
+const NOT_PERMANENT = /stage|stagiaire|intern|alternance|apprenti|cdd|fixed[- ]term|freelance|int[ée]rim/i;
+
+/** Lucca Recruitment boards (jobs.world.luccasoftware.com/<slug>): no API, but the board page lists every offer. */
+export function parseLuccaBoard(html: string, slug: string, company: string): Posting[] {
+  const { document } = parseHTML(html);
+  const postings: Posting[] = [];
+  for (const item of document.querySelectorAll("li.jobBoard-offers-item")) {
+    const link = item.querySelector("a.jobBoard-offers-item-link");
+    const href = link?.getAttribute("href");
+    if (!link || !href) continue;
+    const tags = [...item.querySelectorAll(".jobBoard-offers-item-tags .tag")].map((t) => t.textContent.trim());
+    const contract = item.querySelector(".tag.palette-lime")?.textContent.trim() ?? "";
+    const title = link.textContent.replace(/\s+/g, " ").trim();
+    if (NOT_PERMANENT.test(contract) || /candidatures? spontan/i.test(title)) continue;
+    const url = new URL(href, `https://jobs.world.luccasoftware.com/${slug}/`).toString();
+    postings.push({
+      url,
+      title,
+      company,
+      location: item.querySelector(".tag.palette-glacier")?.textContent.trim() ?? tags[0],
+      remote: tags.some((t) => /t[ée]l[ée]travail total|full remote/i.test(t)),
+      postedAt: parseFrenchDate(item.querySelector(".jobBoard-offers-item-time")?.textContent.trim() ?? ""),
+      loadDescription: async () => (await fetchDescription(url)).text,
+    });
+  }
+  return postings;
+}
+
+const listLucca: Lister = async (slug, company) =>
+  parseLuccaBoard(await getText(`https://jobs.world.luccasoftware.com/${slug}`), slug, company);
+
+/** Teamtailor career sites publish an RSS feed of every open job, descriptions included. */
+export function parseTeamtailorRss(xml: string, company: string): Posting[] {
+  const field = (item: string, tag: string) =>
+    item.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1].replace(/^<!\[CDATA\[|\]\]>$/g, "").trim();
+  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].flatMap(([, item]) => {
+    const url = field(item, "link");
+    const title = field(item, "title");
+    if (!url || !title) return [];
+    const pubDate = field(item, "pubDate");
+    const cities = [...item.matchAll(/<tt:city>([^<]*)<\/tt:city>/g)].map((m) => m[1].trim()).filter(Boolean);
+    return [
+      {
+        url,
+        title: htmlToText(title),
+        company,
+        location: [...new Set(cities)].join("; ") || undefined,
+        remote: field(item, "remoteStatus") === "fully",
+        postedAt: pubDate ? new Date(pubDate).toISOString() : undefined,
+        description: htmlToText(field(item, "description") ?? ""),
+      },
+    ];
+  });
+}
+
+/** Slug: "acme" for acme.teamtailor.com, or the career site's own host ("careers.acme.fr"). */
+const teamtailorHost = (slug: string) => (slug.includes(".") ? slug : `${slug}.teamtailor.com`);
+
+const listTeamtailor: Lister = async (slug, company) =>
+  parseTeamtailorRss(await getText(`https://${teamtailorHost(slug)}/jobs.rss`), company);
+
+const listRecruitee: Lister = async (slug, company) => {
+  type O = {
+    title: string;
+    careers_url: string;
+    location?: string;
+    city?: string;
+    remote?: boolean;
+    published_at?: string;
+    created_at?: string;
+    description?: string;
+    requirements?: string;
+    employment_type_code?: string;
+  };
+  const { offers } = await getJson<{ offers: O[] }>(`https://${slug}.recruitee.com/api/offers/`);
+  return offers
+    .filter((o) => !NOT_PERMANENT.test(o.employment_type_code ?? ""))
+    .map((o) => ({
+      url: o.careers_url,
+      title: o.title,
+      company,
+      location: o.location ?? o.city,
+      remote: o.remote,
+      postedAt: iso(o.published_at ?? o.created_at),
+      description: htmlToText(`${o.description ?? ""}${o.requirements ?? ""}`),
+    }));
+};
+
 const LISTERS: Record<AtsType, Lister> = {
   lever: listLever,
   ashby: listAshby,
   greenhouse: listGreenhouse,
   smartrecruiters: listSmartRecruiters,
   workable: listWorkable,
+  lucca: listLucca,
+  teamtailor: listTeamtailor,
+  recruitee: listRecruitee,
 };
 
 export function listPostings(company: Pick<Company, "ats" | "slug" | "name">): Promise<Posting[]> {
@@ -159,7 +268,9 @@ export async function postingDescription(p: Posting): Promise<string> {
 
 /** Recognises a careers-page URL ("https://jobs.lever.co/acme") or "ats:slug" shorthand. */
 export function parseBoardUrl(input: string): { ats: AtsType; slug: string } | null {
-  const short = input.trim().match(/^(lever|ashby|greenhouse|smartrecruiters|workable):([\w.-]+)$/i);
+  const short = input
+    .trim()
+    .match(/^(lever|ashby|greenhouse|smartrecruiters|workable|lucca|teamtailor|recruitee):([\w.-]+)$/i);
   if (short) return { ats: short[1].toLowerCase() as AtsType, slug: short[2] };
 
   let url: URL;
@@ -179,5 +290,8 @@ export function parseBoardUrl(input: string): { ats: AtsType; slug: string } | n
   if (host === "jobs.smartrecruiters.com" && first) return { ats: "smartrecruiters", slug: first };
   if (host === "careers.smartrecruiters.com" && first) return { ats: "smartrecruiters", slug: first };
   if (host === "apply.workable.com" && first && first !== "j") return { ats: "workable", slug: first };
+  if (host === "jobs.world.luccasoftware.com" && first) return { ats: "lucca", slug: first };
+  if (host.endsWith(".teamtailor.com")) return { ats: "teamtailor", slug: host.replace(/\.teamtailor\.com$/, "") };
+  if (host.endsWith(".recruitee.com")) return { ats: "recruitee", slug: host.replace(/\.recruitee\.com$/, "") };
   return null;
 }

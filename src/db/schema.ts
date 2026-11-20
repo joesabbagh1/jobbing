@@ -2,10 +2,10 @@ import { sql } from "drizzle-orm";
 import { blob, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { APPLY_CHANNELS } from "../lib/apply/channels";
 
-export const JOB_ORIGINS = ["airtable", "search", "api"] as const;
+export const JOB_ORIGINS = ["airtable", "search", "api", "claude"] as const;
 export type JobOrigin = (typeof JOB_ORIGINS)[number];
 
-/** DeepSeek's assessment of how well a job fits the search profile. */
+/** How well a job fits the search profile, ranked by hand (scripts/hand-scores.ts). */
 export type JobAnalysis = {
   verdict: "apply" | "maybe" | "skip";
   summary: string;
@@ -36,7 +36,7 @@ export const jobs = sqliteTable("jobs", {
   status: text("status", { enum: JOB_STATUSES }).notNull().default("new"),
   // How the job reached the platform.
   origin: text("origin", { enum: JOB_ORIGINS }),
-  // 0–100 fit score and reasoning from DeepSeek.
+  // 0–100 fit score and the reasoning behind it.
   matchScore: real("match_score"),
   analysis: text("analysis", { mode: "json" }).$type<JobAnalysis>(),
   notes: text("notes"),
@@ -50,7 +50,16 @@ export const jobs = sqliteTable("jobs", {
 
 export type Job = typeof jobs.$inferSelect;
 
-export const ATS_TYPES = ["lever", "ashby", "greenhouse", "smartrecruiters", "workable"] as const;
+export const ATS_TYPES = [
+  "lever",
+  "ashby",
+  "greenhouse",
+  "smartrecruiters",
+  "workable",
+  "lucca",
+  "teamtailor",
+  "recruitee",
+] as const;
 export type AtsType = (typeof ATS_TYPES)[number];
 
 /** Company career boards the search pulls from. */
@@ -65,7 +74,7 @@ export const companies = sqliteTable(
     lastCheckedAt: text("last_checked_at"),
     lastJobCount: integer("last_job_count"),
     lastError: text("last_error"),
-    /** "linkedin" when the search found the board itself from a LinkedIn posting. */
+    /** "linkedin" when the search found the board itself from a LinkedIn posting, "claude" when the daily hunt did. */
     discoveredFrom: text("discovered_from"),
   },
   (t) => [uniqueIndex("companies_ats_slug").on(t.ats, t.slug)],
@@ -86,7 +95,7 @@ export const boardLookups = sqliteTable("board_lookups", {
     .default(sql`(CURRENT_TIMESTAMP)`),
 });
 
-/** Postings the AI scored below the threshold, so they aren't scored again every run. */
+/** Postings scored below the threshold by an earlier version of the search, kept so they aren't added again. */
 export const rejectedPostings = sqliteTable("rejected_postings", {
   url: text("url").primaryKey(),
   company: text("company").notNull(),
@@ -154,7 +163,7 @@ export const settings = sqliteTable("settings", {
 export const PLACE_KINDS = ["place", "broad"] as const;
 
 /**
- * Coordinates for each distinct job location text, filled by the AI once per text and reused after that.
+ * Coordinates for each distinct job location text, looked up on OpenStreetMap once per text and reused after that.
  * "broad" means no single point fits (remote, a whole country, several countries): no pin.
  */
 export const places = sqliteTable("places", {

@@ -1,6 +1,7 @@
 "use client";
 
-import { BellRing, CheckCircle2, FileText, FileUser, Send, Undo2 } from "lucide-react";
+import { ArrowRight, BellRing, CheckCircle2, FileText, FileUser, Send, Undo2 } from "lucide-react";
+import Link from "next/link";
 import { useActionState } from "react";
 import { AppSelect } from "@/components/app-select";
 import { ConfirmAction } from "@/components/confirm-action";
@@ -35,6 +36,7 @@ const CHANNEL_LABELS: Record<(typeof APPLY_CHANNELS)[number], string> = {
 export function ApplyCard({
   jobId,
   ready,
+  next,
   documents,
   defaultFollowUp,
   today,
@@ -43,6 +45,8 @@ export function ApplyCard({
   jobId: number;
   /** A CV exists, so the job can be marked applied. */
   ready: boolean;
+  /** The next Ready job to work on, offered once this one is applied. */
+  next?: { href: string; title: string; company: string; remaining: number } | null;
   /** The CV and cover letter rows (status and actions). */
   documents: React.ReactNode;
   defaultFollowUp: string;
@@ -66,6 +70,19 @@ export function ApplyCard({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {next ? (
+            <Link href={next.href} className={buttonVariants({ className: "h-auto w-full justify-between py-2" })}>
+              <span className="min-w-0 text-left">
+                <span className="block">Next ready job ({next.remaining} left)</span>
+                <span className="block truncate text-xs font-normal opacity-80">
+                  {[next.title, next.company].filter(Boolean).join(" · ")}
+                </span>
+              </span>
+              <ArrowRight />
+            </Link>
+          ) : (
+            <p className="text-sm text-muted-foreground">No other jobs marked Ready.</p>
+          )}
           {applied.notes && <p className="text-muted-foreground">{applied.notes}</p>}
           <div className="flex flex-wrap gap-2">
             <a href={`/api/applications/${jobId}/cv`} target="_blank" className={buttonVariants({ variant: "outline", size: "sm" })}>

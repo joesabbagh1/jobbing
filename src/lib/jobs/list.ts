@@ -1,4 +1,5 @@
-import { and, type AnyColumn, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, type SQL, sql } from "drizzle-orm";
+import { and, type AnyColumn, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL, sql } from "drizzle-orm";
+import type { Db } from "@/db";
 import { applications, JOB_ORIGINS, JOB_STATUSES, type Job, type JobOrigin, type JobStatus, jobs } from "@/db/schema";
 
 // Jobs list state lives in the URL (?q=&status=&match=&origin=&jd=&due=&group=&sort=&dir=) so views are shareable.
@@ -18,7 +19,7 @@ export type SortColumn = keyof typeof SORT_COLUMNS;
 export type SortDir = "asc" | "desc";
 // Links from before column sorting.
 const LEGACY_SORTS: Record<string, SortColumn> = { newest: "added", score: "match" };
-export const ORIGIN_LABELS: Record<JobOrigin, string> = { airtable: "Grok bot", search: "Our search", api: "API" };
+export const ORIGIN_LABELS: Record<JobOrigin, string> = { airtable: "Grok bot", search: "Our search", api: "API", claude: "Claude" };
 
 export type ListParams = {
   q: string;
@@ -184,3 +185,18 @@ export function groupJobs(rows: Job[], by: ListParams["group"]): JobGroup[] {
   return list.sort((a, b) => b.jobs.length - a.jobs.length || a.label.localeCompare(b.label));
 }
 
+
+/** The best-matching Ready job other than `exceptId`, and how many Ready jobs that leaves. */
+export function nextReadyJob(db: Db, exceptId: number): { id: number; title: string; company: string; remaining: number } | null {
+  const where = and(eq(jobs.status, "ready"), ne(jobs.id, exceptId));
+  const next = db
+    .select({ id: jobs.id, title: jobs.title, company: jobs.company })
+    .from(jobs)
+    .where(where)
+    .orderBy(...orderFor("match"))
+    .limit(1)
+    .get();
+  if (!next) return null;
+  const remaining = db.select({ n: sql<number>`count(*)` }).from(jobs).where(where).get()?.n ?? 1;
+  return { ...next, remaining };
+}

@@ -1,14 +1,11 @@
 import { getDb } from "@/db";
-import { isAiConfigured } from "@/lib/ai/deepseek";
 import { isAirtableConfigured, syncAirtable } from "@/lib/airtable/sync";
 import { geocodePending } from "@/lib/geo/geocode";
 import { enrichPending } from "@/lib/jobs/description/enrich";
-import { getSearchProfile } from "@/lib/search/profile";
-import { getLastSearch, runSearch, scoreUnscoredJobs } from "@/lib/search/run";
+import { getLastSearch, runSearch } from "@/lib/search/run";
 
-/** Puts new job locations on the map. Each distinct location text costs one AI lookup, ever. */
+/** Puts new job locations on the map. Each distinct location text is looked up once, ever. */
 async function geocode() {
-  if (!isAiConfigured()) return;
   const r = await geocodePending(getDb());
   if (r.saved || r.errors.length) {
     console.log(`[map] placed ${r.saved}/${r.looked} new location(s)` + (r.errors.length ? `, ${r.errors[0]}` : ""));
@@ -22,13 +19,13 @@ const g = globalThis as unknown as {
   __airtableRunning?: boolean;
 };
 
-// 1. Pull new Growth-bot findings from Airtable, fetch missing descriptions, then score them.
+// 1. Pull new Growth-bot findings from Airtable and fetch missing descriptions.
 if (!isAirtableConfigured()) {
   console.log("[airtable] not configured, auto-sync disabled");
 } else {
   const minutes = Number(process.env.AIRTABLE_SYNC_MINUTES) || 5;
   const run = async () => {
-    // Scoring can outlast the interval; skip a tick rather than score the same jobs twice.
+    // Fetching descriptions can outlast the interval; skip a tick rather than run twice at once.
     if (g.__airtableRunning) return;
     g.__airtableRunning = true;
     try {
@@ -42,12 +39,6 @@ if (!isAirtableConfigured()) {
         console.log(`[descriptions] fetched ${ok}/${fetched.length}`);
       }
 
-      if (isAiConfigured()) {
-        const { scored, errors } = await scoreUnscoredJobs(getDb(), getSearchProfile(getDb()), 20);
-        if (scored || errors.length) {
-          console.log(`[score] scored ${scored}` + (errors.length ? `, ${errors.length} failed: ${errors[0]}` : ""));
-        }
-      }
       await geocode();
     } finally {
       g.__airtableRunning = false;
@@ -72,12 +63,10 @@ if (!isAirtableConfigured()) {
     return !lastAt || Date.now() - Date.parse(lastAt) > wait;
   };
   const tick = async () => {
-    // Without AI scoring every keyword match would be added; leave that to manual runs.
-    if (!isAiConfigured() || !due()) return;
+    if (!due()) return;
     const r = await runSearch(getDb());
     console.log(
       `[search] ${r.postings} postings, ${r.matchedFilters} matched filters, ${r.added} added` +
-        (r.aiEnabled ? `, ${r.rejectedByAi} rejected by AI, ${r.rescored} scored` : " (no AI key)") +
         (r.errors.length ? `, ${r.errors.length} errors` : ""),
     );
     await geocode();
@@ -86,7 +75,5 @@ if (!isAirtableConfigured()) {
   if (g.__searchTimer) clearInterval(g.__searchTimer);
   g.__searchTimer = setInterval(tick, 10 * 60_000);
   setTimeout(tick, 30_000);
-  console.log(
-    isAiConfigured() ? `[search] runs every ${hours} h` : "[search] auto-search waits for DEEPSEEK_API_KEY",
-  );
+  console.log(`[search] runs every ${hours} h`);
 }

@@ -43,7 +43,7 @@ export function ProfileForm({ profile }: { profile: SearchProfile }) {
     <form action={action} className="space-y-5">
       <Field
         label="About you"
-        hint="The AI scores every job and writes cover letters from this. Mention your role, experience, stack, location, contract type and deal-breakers."
+        hint="New jobs are ranked against this. Mention your role, experience, stack, location, contract type and deal-breakers."
       >
         <Textarea name="about" defaultValue={profile.about} required className="min-h-40" />
       </Field>
@@ -64,7 +64,7 @@ export function ProfileForm({ profile }: { profile: SearchProfile }) {
           <Field label="Max age (days)">
             <Input name="maxAgeDays" type="number" min={1} max={365} defaultValue={profile.maxAgeDays} />
           </Field>
-          <Field label="Min AI score" hint="0–100">
+          <Field label="Min score" hint="0–100; new jobs ranked lower are skipped">
             <Input name="minScore" type="number" min={0} max={100} defaultValue={profile.minScore} />
           </Field>
         </div>

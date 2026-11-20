@@ -75,7 +75,7 @@ export function deleteTailoredCv(db: Db, jobId: number) {
   db.delete(tailoredCvs).where(eq(tailoredCvs.jobId, jobId)).run();
 }
 
-/** Free-form notes on everything the candidate worked on, which AI tailoring can draw from. */
+/** Free-form notes on everything the candidate worked on; cover letters are checked against them. */
 export function getExperienceNotes(db: Db): string {
   return getSetting<string>(db, NOTES_KEY) ?? "";
 }

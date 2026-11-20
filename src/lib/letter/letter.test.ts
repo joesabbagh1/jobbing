@@ -39,11 +39,3 @@ describe("letterWarnings", () => {
     });
   });
 });
-
-describe("fixSignOff", () => {
-  it("replaces a wrong-language sign-off and adds a missing one", async () => {
-    const { fixSignOff } = await import("@/lib/ai/write-letter");
-    expect(fixSignOff("Dear Hiring Team,\n\nBody.\n\nCordialement,", "en")).toBe("Dear Hiring Team,\n\nBody.\n\nKind regards,");
-    expect(fixSignOff("Madame, Monsieur,\n\nCorps.", "fr")).toBe("Madame, Monsieur,\n\nCorps.\n\nCordialement,");
-  });
-});

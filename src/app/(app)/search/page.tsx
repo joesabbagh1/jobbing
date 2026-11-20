@@ -1,5 +1,5 @@
 import { asc } from "drizzle-orm";
-import { AlertTriangle, CircleAlert, Loader2, Play, Sparkles } from "lucide-react";
+import { CircleAlert, Loader2, Play, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { SubmitButton } from "@/components/submit-button";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDb } from "@/db";
 import { companies } from "@/db/schema";
-import { isAiConfigured } from "@/lib/ai/deepseek";
 import { startSearch } from "@/lib/search/actions";
 import { seedCompanies } from "@/lib/search/companies";
 import { getSearchProfile } from "@/lib/search/profile";
@@ -40,7 +39,7 @@ export default function SearchPage() {
       <AutoRefresh active={running} />
       <PageHeader
         title="Search"
-        description="Checks every company board below and LinkedIn, filters by your keywords, then has DeepSeek score each new match. Runs every 6 hours while the app is open."
+        description="Checks every company board below and LinkedIn, filters by your keywords, and adds each new match unscored, to be ranked by hand. Runs every 6 hours while the app is open."
         actions={
           <form action={startSearch}>
             <SubmitButton disabled={running} pendingLabel="Starting…" className="h-9">
@@ -51,19 +50,8 @@ export default function SearchPage() {
         }
       />
 
-      {!isAiConfigured() && (
-        <div className="flex gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-300">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <p>
-            DeepSeek isn&apos;t connected (<code className="font-mono">DEEPSEEK_API_KEY</code> in{" "}
-            <code className="font-mono">.env.local</code>). Automatic searches are paused; a manual run adds every keyword
-            match without a score.
-          </p>
-        </div>
-      )}
-
       {last && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Stat
             label="Positions checked"
             value={last.postings}
@@ -78,8 +66,7 @@ export default function SearchPage() {
           />
           <Stat label="Matched filters" value={last.matchedFilters} />
           <Stat label="Added" value={last.added} highlight />
-          <Stat label="Rejected by AI" value={last.aiEnabled ? last.rejectedByAi : "—"} />
-          <div className="col-span-2 flex flex-col justify-center rounded-xl border bg-card px-4 py-3 text-sm md:col-span-1">
+          <div className="flex flex-col justify-center rounded-xl border bg-card px-4 py-3 text-sm">
             <span className="text-muted-foreground">Last run</span>
             <span className="font-medium">
               {last.finishedAt
@@ -151,9 +138,9 @@ export default function SearchPage() {
                   <TableRow key={c.id} className={cn(!c.enabled && "text-muted-foreground")}>
                     <TableCell className="px-4 font-medium">
                       {c.name}
-                      {c.discoveredFrom === "linkedin" && (
+                      {(c.discoveredFrom === "linkedin" || c.discoveredFrom === "claude") && (
                         <Badge variant="outline" className="ml-2 font-normal text-muted-foreground">
-                          via LinkedIn
+                          {c.discoveredFrom === "claude" ? "via Claude" : "via LinkedIn"}
                         </Badge>
                       )}
                     </TableCell>

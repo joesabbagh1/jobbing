@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, CircleAlert, Download, Eye, Loader2, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, CircleAlert, Download, Eye, Loader2 } from "lucide-react";
 import { AppSelect } from "@/components/app-select";
-import { ConfirmAction } from "@/components/confirm-action";
+import { CopyTextButton } from "@/components/copy-text-button";
 import { AutoTextarea } from "@/components/cv-editor/fields";
 import { LetterTemplate } from "@/components/letter-template";
 import { ScaledPage } from "@/components/scaled-page";
@@ -11,9 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Cv } from "@/lib/cv/schema";
-import { generateLetter, saveLetterAction } from "@/lib/letter/actions";
+import { saveLetterAction } from "@/lib/letter/actions";
 import { type LetterVocabulary, letterWarnings } from "@/lib/letter/check";
-import type { Letter } from "@/lib/letter/schema";
+import { type Letter, letterPlainText } from "@/lib/letter/schema";
 import { cn } from "@/lib/utils";
 
 type SaveState = "saved" | "dirty" | "saving" | "error";
@@ -25,7 +25,6 @@ export function LetterEditor({
   basics,
   company,
   vocabulary,
-  autoGenerate,
 }: {
   jobId: number;
   initial?: Letter;
@@ -35,15 +34,10 @@ export function LetterEditor({
   company: string;
   /** What the letter may draw on, for live fact warnings. */
   vocabulary: LetterVocabulary;
-  autoGenerate?: boolean;
 }) {
   const [letter, setLetter] = useState<Letter>(initial ?? { language: defaultLanguage, subject: "", body: "" });
   const [state, setState] = useState<SaveState>("saved");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  /** A note from the last AI draft, e.g. that the posting was too short to work from. */
-  const [notice, setNotice] = useState<string>();
-  const [instructions, setInstructions] = useState("");
   const latest = useRef(letter);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -68,31 +62,6 @@ export function LetterEditor({
     timer.current = setTimeout(() => void save(), 800);
   };
 
-  const generate = useCallback(
-    async (language: "en" | "fr", extra?: string) => {
-      setBusy(true);
-      setError(undefined);
-      const res = await generateLetter(jobId, { language, instructions: extra });
-      setBusy(false);
-      if ("error" in res) return setError(res.error);
-      setNotice(res.warning);
-      clearTimeout(timer.current);
-      setLetter(res.letter);
-      latest.current = res.letter;
-      setState("saved");
-    },
-    [jobId],
-  );
-
-  const started = useRef(false);
-  useEffect(() => {
-    if (autoGenerate && !started.current) {
-      started.current = true;
-      window.history.replaceState(null, "", window.location.pathname);
-      if (!initial?.body) void generate(defaultLanguage);
-    }
-  }, [autoGenerate, initial, defaultLanguage, generate]);
-
   useEffect(() => {
     const beforeUnload = (e: BeforeUnloadEvent) => {
       if (state === "dirty" || state === "saving") e.preventDefault();
@@ -106,16 +75,10 @@ export function LetterEditor({
     window.open(`/api/letter/${jobId}/pdf${download ? "?download" : ""}`, "_blank");
   };
 
+
   const warnings = letterWarnings(`${letter.subject}\n${letter.body}`, vocabulary);
   const words = letter.body.trim() ? letter.body.trim().split(/\s+/).length : 0;
   const hasLetter = Boolean(letter.body.trim());
-
-  const writeButton = (onClick?: () => void) => (
-    <Button disabled={busy} onClick={onClick} className="bg-violet-600 text-white hover:bg-violet-700">
-      {busy ? <Loader2 className="animate-spin" /> : <Sparkles />}
-      {busy ? "Writing…" : hasLetter ? "Rewrite with AI" : "Write with AI"}
-    </Button>
-  );
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -132,6 +95,7 @@ export function LetterEditor({
           </span>
           {hasLetter && (
             <div className="flex gap-2">
+              <CopyTextButton size="default" text={letterPlainText(letter, basics[letter.language]?.name)} />
               <Button variant="outline" className="bg-background" onClick={() => openPdf(false)}>
                 <Eye />
                 Preview PDF
@@ -144,44 +108,21 @@ export function LetterEditor({
           )}
         </div>
 
-        <section className="space-y-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <AppSelect
-              aria-label="Letter language"
-              value={letter.language}
-              onValueChange={(v) => update({ ...letter, language: v as Letter["language"] })}
-              options={[
-                { value: "fr", label: "Français" },
-                { value: "en", label: "English" },
-              ]}
-              className="min-w-28 bg-background"
-            />
-            <Input
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              placeholder="Optional direction, e.g. shorter, mention my homelab…"
-              className="min-w-48 flex-1 bg-background"
-            />
-            {hasLetter ? (
-              <ConfirmAction
-                title="Replace this letter?"
-                description="A new draft replaces your current letter, including your edits."
-                confirmLabel="Rewrite"
-                destructive={false}
-                onConfirm={() => generate(letter.language, instructions)}
-                trigger={writeButton()}
-              />
-            ) : (
-              writeButton(() => void generate(letter.language, instructions))
-            )}
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <AppSelect
+            aria-label="Letter language"
+            value={letter.language}
+            onValueChange={(v) => update({ ...letter, language: v as Letter["language"] })}
+            options={[
+              { value: "fr", label: "Français" },
+              { value: "en", label: "English" },
+            ]}
+            className="min-w-28 bg-background"
+          />
           <p className="text-xs text-muted-foreground">
-            Drafted from the posting, this job&apos;s CV, your experience notes and your profile. Facts must come from
-            your CV or notes; anything that doesn&apos;t is flagged below.
+            Facts must come from your CV or notes; anything that doesn&apos;t is flagged below.
           </p>
-          {notice && <p className="text-sm text-amber-700 dark:text-amber-400">{notice}</p>}
-          {error && state !== "error" && <p className="text-sm text-destructive">{error}</p>}
-        </section>
+        </div>
 
         <div className="space-y-1.5">
           <Label className="text-xs font-normal text-muted-foreground">Subject</Label>
@@ -196,7 +137,7 @@ export function LetterEditor({
             value={letter.body}
             onChange={(body) => update({ ...letter, body })}
             className="min-h-80 bg-background leading-relaxed"
-            placeholder="Write your letter, or let the AI draft it."
+            placeholder="Write your letter."
           />
         </div>
         {(warnings.unknown.length > 0 || warnings.fromPosting.length > 0) && (

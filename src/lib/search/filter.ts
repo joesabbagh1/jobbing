@@ -18,7 +18,7 @@ export function containsKeyword(text: string, keyword: string): boolean {
 
 export type FilterResult = { pass: true } | { pass: false; reason: "title" | "excluded" | "company" | "location" | "age" };
 
-/** Cheap checks that run before any AI call. */
+/** Keyword, location and age checks a posting must pass to be added. */
 export function prefilter(p: Posting, profile: SearchProfile, now = Date.now()): FilterResult {
   if (!profile.titleKeywords.some((k) => containsKeyword(p.title, k))) return { pass: false, reason: "title" };
   if (profile.excludeTitleKeywords.some((k) => containsKeyword(p.title, k))) return { pass: false, reason: "excluded" };

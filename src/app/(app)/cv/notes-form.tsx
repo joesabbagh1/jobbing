@@ -5,7 +5,6 @@ import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { saveNotesAction } from "@/lib/cv/actions";
-import { MAX_NOTES_CHARS } from "@/lib/cv/tailor";
 
 export function NotesForm({ initial }: { initial: string }) {
   const [state, action, pending] = useActionState(saveNotesAction, {});
@@ -19,14 +18,14 @@ export function NotesForm({ initial }: { initial: string }) {
         <NotebookPen className="size-4 text-muted-foreground" />
         Experience notes
         <span className="font-normal text-muted-foreground">
-          {initial ? `${words} words · used when the AI tailors your CV` : "empty"}
+          {initial ? `${words} words` : "empty"}
         </span>
       </summary>
       <form action={action} className="space-y-3 px-4 pb-4">
         <p className="text-xs text-muted-foreground">
           Write down everything you&apos;ve worked on, in any order and any language: each job in detail, side projects,
-          tools, numbers, things too small for the CV. When you tailor a CV to a job, the AI can add bullets and projects
-          from these notes, but only with facts written here.
+          tools, numbers, things too small for the CV. Cover letters are checked against these notes and your CV: facts
+          found in neither are flagged.
         </p>
         <Textarea
           name="notes"
@@ -44,11 +43,6 @@ export function NotesForm({ initial }: { initial: string }) {
             <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Check className="size-3.5" />
               Saved
-            </span>
-          )}
-          {text.length > MAX_NOTES_CHARS && (
-            <span className="text-xs text-amber-700 dark:text-amber-400">
-              Only the first {MAX_NOTES_CHARS.toLocaleString()} characters are sent to the AI.
             </span>
           )}
         </div>

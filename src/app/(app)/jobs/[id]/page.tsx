@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import {
   AlertTriangle,
+  ArrowRight,
   Bot,
   CheckCircle2,
   Download,
@@ -9,12 +10,12 @@ import {
   FileUser,
   PenLine,
   RefreshCw,
-  Sparkles,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmAction } from "@/components/confirm-action";
+import { CopyTextButton } from "@/components/copy-text-button";
 import { PageHeader } from "@/components/page-header";
 import { PdfPreview } from "@/components/pdf-preview";
 import { ScoreBadge } from "@/components/status-badge";
@@ -29,8 +30,9 @@ import { resetTailoredCv } from "@/lib/cv/actions";
 import { LANGUAGE_NAMES } from "@/lib/cv/schema";
 import { getTailoredCv, masterLanguages, pickMasterCv } from "@/lib/cv/store";
 import { refetchDescription, updateJob } from "@/lib/jobs/actions";
-import { writeLetterWithAi } from "@/lib/letter/actions";
-import { postingLanguage } from "@/lib/letter/schema";
+import { nextReadyJob } from "@/lib/jobs/list";
+import { letterCv } from "@/lib/letter/context";
+import { letterPlainText, postingLanguage } from "@/lib/letter/schema";
 import { getLetter } from "@/lib/letter/store";
 import { cn } from "@/lib/utils";
 import { ApplyCard } from "./apply-card";
@@ -67,6 +69,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const startLanguage = pickMasterCv(db, postingLanguage(job.description))?.language;
   const letter = getLetter(db, job.id);
   const hasLetter = Boolean(letter?.body.trim());
+  const letterText = letter && hasLetter ? letterPlainText(letter, letterCv(db, job.id, letter.language)?.basics.name) : "";
   const application = db
     .select({
       appliedAt: applications.appliedAt,
@@ -81,6 +84,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const today = new Date().toISOString().slice(0, 10);
   const inTenDays = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
   const save = updateJob.bind(null, job.id);
+  const next = nextReadyJob(db, job.id);
   // The Growth bot writes "Notes" and "Tags" columns; show those prominently.
   const { Notes: botNotes, Tags: tags, Status: _airtableStatus, ...rest } = job.extra ?? {};
   void _airtableStatus;
@@ -96,6 +100,16 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
         actions={
           <>
             <StatusSelect jobId={job.id} status={job.status} />
+            {next && (
+              <Link
+                href={`/jobs/${next.id}`}
+                title={`${next.title}${next.company ? ` · ${next.company}` : ""}`}
+                className={buttonVariants({ variant: "outline", className: "h-9" })}
+              >
+                Next ready ({next.remaining})
+                <ArrowRight />
+              </Link>
+            )}
             <a href={job.url} target="_blank" rel="noopener noreferrer" className={buttonVariants({ className: "h-9" })}>
               Open posting
               <ExternalLink />
@@ -123,7 +137,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                   <ScoreBadge score={job.matchScore} className="h-9 min-w-12 text-base" />
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      AI match
+                      Match
                       <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", VERDICT[job.analysis.verdict].className)}>
                         {VERDICT[job.analysis.verdict].label}
                       </span>
@@ -241,6 +255,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
           <ApplyCard
             jobId={job.id}
             ready={hasMaster || Boolean(tailored)}
+            next={next && { href: `/jobs/${next.id}`, title: next.title, company: next.company, remaining: next.remaining }}
             defaultFollowUp={inTenDays}
             today={today}
             applied={
@@ -262,7 +277,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                       ? `Tailored for this job · ${LANGUAGE_NAMES[tailoredCv.language]}`
                       : hasMaster
                         ? "Master CV, not tailored yet"
-                        : "No CV imported yet"
+                        : "No CV yet"
                   }
                   done={tailored}
                 >
@@ -294,11 +309,10 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                       jobId={job.id}
                       languages={masters}
                       defaultLanguage={startLanguage}
-                      canTailor={Boolean(job.description)}
                     />
                   ) : (
                     <Link href="/cv" className={buttonVariants({ size: "sm", variant: "outline" })}>
-                      Import your CV
+                      Create your CV
                     </Link>
                   )}
                 </DocumentRow>
@@ -315,6 +329,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                         <PenLine />
                         Edit
                       </Link>
+                      <CopyTextButton text={letterText} />
                       <PdfPreview src={`/api/letter/${job.id}/pdf`} title={["Cover letter", job.company].filter(Boolean).join(" · ")} />
                       <a href={`/api/letter/${job.id}/pdf?download`} className={buttonVariants({ size: "sm", variant: "outline" })}>
                         <Download />
@@ -322,19 +337,10 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
                       </a>
                     </>
                   ) : hasMaster ? (
-                    <>
-                      {job.description && (
-                        <form action={writeLetterWithAi.bind(null, job.id)}>
-                          <SubmitButton size="sm">
-                            <Sparkles />
-                            Write with AI
-                          </SubmitButton>
-                        </form>
-                      )}
-                      <Link href={`/jobs/${job.id}/letter`} className={buttonVariants({ size: "sm", variant: "outline" })}>
-                        Write myself
-                      </Link>
-                    </>
+                    <Link href={`/jobs/${job.id}/letter`} className={buttonVariants({ size: "sm", variant: "outline" })}>
+                      <PenLine />
+                      Write
+                    </Link>
                   ) : null}
                 </DocumentRow>
               </>

@@ -15,9 +15,9 @@ export const searchProfileSchema = z.object({
   locations: keywords,
   /** Skip postings older than this many days (when the board gives a date). */
   maxAgeDays: z.number().int().min(1).max(365),
-  /** Minimum AI score (0–100) for a job to be added. */
+  /** Minimum score (0–100): new jobs ranked lower are set to skipped. */
   minScore: z.number().int().min(0).max(100),
-  /** Who you are and what you want, in your own words. This is what the AI scores against. */
+  /** Who you are and what you want, in your own words. New jobs are ranked against this. */
   about: z.string().trim().min(1),
   /** LinkedIn's public job search, run with each query (results still go through the filters above). */
   linkedin: z
@@ -86,7 +86,7 @@ export const DEFAULT_PROFILE: SearchProfile = {
   maxAgeDays: 45,
   minScore: 60,
   about: [
-    "EDIT ME: describe yourself so the AI can judge fit.",
+    "EDIT ME: describe yourself so new jobs can be ranked for fit.",
     "Example: DevOps / Cloud / Platform engineer with ~3 years of experience.",
     "Strong with AWS, Kubernetes, Terraform, CI/CD, Python. Based in Paris.",
     "Looking for a permanent (CDI) role in Paris or hybrid in Île-de-France, or fully remote within France.",

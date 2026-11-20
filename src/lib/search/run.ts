@@ -1,14 +1,13 @@
-import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Db } from "@/db";
 import { companies, jobs, rejectedPostings } from "@/db/schema";
-import { isAiConfigured } from "@/lib/ai/deepseek";
-import { scoreJob } from "@/lib/ai/score-job";
 import { normalizeJobUrl } from "@/lib/jobs/normalize-url";
 import { upsertJob } from "@/lib/jobs/upsert";
 import { getSetting, setSetting } from "@/lib/settings";
 import { seedCompanies } from "./companies";
 import { companyKey, lookupBoard, titleKey, titlesMatch } from "./discover";
 import { prefilter } from "./filter";
+import { searchFranceTravail } from "./francetravail";
 import { searchLinkedIn } from "./linkedin";
 import { searchJeanMichel } from "./jeanmichel";
 import { getSearchProfile, type SearchProfile } from "./profile";
@@ -23,24 +22,19 @@ export type SearchResult = {
   linkedin?: number;
   /** Permanent roles found on Jean-Michel.io (before filters). */
   jeanMichel?: number;
+  /** Permanent roles found through France Travail's API (before filters); absent when it isn't set up. */
+  franceTravail?: number;
   /** Company boards found from LinkedIn postings and added to the list this run. */
   discovered?: string[];
   matchedFilters: number;
   alreadyKnown: number;
+  /** New matches added to the jobs list, unscored until they're ranked by hand. */
   added: number;
-  rejectedByAi: number;
-  /** Existing jobs (e.g. from Airtable) scored this run. */
-  rescored: number;
-  /** Candidates left for the next run because the per-run AI budget ran out. */
-  deferred: number;
-  aiEnabled: boolean;
   /** Every board failed (usually no network): the scheduler retries soon instead of in hours. */
   allBoardsFailed?: boolean;
   errors: string[];
 };
 
-// Caps DeepSeek usage per run; leftovers are picked up next time.
-const MAX_AI_CALLS = Number(process.env.SEARCH_MAX_AI_CALLS) || 80;
 // Caps board probing per run (each company costs up to ~10 small requests); the rest wait for the next run.
 const MAX_BOARD_LOOKUPS = 40;
 const LAST_RESULT_KEY = "lastSearch";
@@ -55,7 +49,7 @@ export function isSearchRunning(): boolean {
   return Boolean(g.__searchRun);
 }
 
-/** Pulls every enabled company board, filters, scores with DeepSeek and adds good matches. Never throws. */
+/** Pulls every enabled company board, filters by keywords and adds new matches unscored. Never throws. */
 export function runSearch(db: Db): Promise<SearchResult> {
   g.__searchRun ??= doSearch(db).finally(() => {
     g.__searchRun = undefined;
@@ -66,7 +60,6 @@ export function runSearch(db: Db): Promise<SearchResult> {
 async function doSearch(db: Db): Promise<SearchResult> {
   seedCompanies(db);
   const profile = getSearchProfile(db);
-  const aiEnabled = isAiConfigured();
   const result: SearchResult = {
     startedAt: new Date().toISOString(),
     companies: 0,
@@ -77,10 +70,6 @@ async function doSearch(db: Db): Promise<SearchResult> {
     matchedFilters: 0,
     alreadyKnown: 0,
     added: 0,
-    rejectedByAi: 0,
-    rescored: 0,
-    deferred: 0,
-    aiEnabled,
     errors: [],
   };
 
@@ -118,6 +107,14 @@ async function doSearch(db: Db): Promise<SearchResult> {
     if (error) result.errors.push(error);
     postings.push(...found);
   }
+
+  // 1d. France Travail, the national job database (only when its API keys are in .env.local).
+  {
+    const { postings: found, error } = await searchFranceTravail(profile.maxAgeDays);
+    if (found.length || error) result.franceTravail = found.length;
+    if (error) result.errors.push(error);
+    postings.push(...found);
+  }
   result.postings = postings.length;
 
   // 2. Cheap filters, then drop anything already in the platform or already rejected.
@@ -150,56 +147,24 @@ async function doSearch(db: Db): Promise<SearchResult> {
     }
   }
 
-  // 3. Score jobs already in the list that have a description but no score yet (from Airtable, the API, or a
-  // description fetched later). They come first: they're already on the jobs page, waiting for a score.
-  let aiCalls = 0;
-  if (aiEnabled) {
-    const { scored, errors } = await scoreUnscoredJobs(db, profile, MAX_AI_CALLS);
-    aiCalls += scored + errors.length;
-    result.rescored = scored;
-    result.errors.push(...errors);
-  }
-
-  // 4. Score new candidates with DeepSeek (or add them unscored if no key is set).
+  // 3. Add the new matches with their descriptions, unscored.
   for (const [url, p] of candidates) {
-    if (aiEnabled && aiCalls >= MAX_AI_CALLS) {
-      result.deferred++;
-      continue;
-    }
     try {
       const description = await postingDescription(p);
-      const input = {
-        url,
-        title: p.title,
-        company: p.company,
-        location: p.location,
-        postedAt: p.postedAt,
-        source: p.source,
-        description: description || undefined,
-      };
-
-      if (!aiEnabled) {
-        upsertJob(db, input, "search");
-        result.added++;
-        continue;
-      }
-
-      aiCalls++;
-      const { score, analysis } = await scoreJob({ profile: profile.about, ...input, description });
-      if (score >= profile.minScore) {
-        const { id } = upsertJob(db, input, "search");
-        db.update(jobs)
-          .set({ matchScore: score, analysis, descriptionSource: "search" })
-          .where(eq(jobs.id, id))
-          .run();
-        result.added++;
-      } else {
-        db.insert(rejectedPostings)
-          .values({ url, company: p.company, title: p.title, location: p.location, matchScore: score, summary: analysis.summary })
-          .onConflictDoNothing()
-          .run();
-        result.rejectedByAi++;
-      }
+      upsertJob(
+        db,
+        {
+          url,
+          title: p.title,
+          company: p.company,
+          location: p.location,
+          postedAt: p.postedAt,
+          source: p.source,
+          description: description || undefined,
+        },
+        "search",
+      );
+      result.added++;
     } catch (err) {
       result.errors.push(`${p.company} – ${p.title}: ${(err as Error).message.split("\n")[0]}`);
     }
@@ -209,64 +174,6 @@ async function doSearch(db: Db): Promise<SearchResult> {
   result.finishedAt = new Date().toISOString();
   setSetting(db, LAST_RESULT_KEY, result);
   return result;
-}
-
-/** Airtable columns we don't map (notes, tags...) as text, for jobs whose description couldn't be fetched. */
-function extraAsText(extra: unknown): string {
-  if (!extra || typeof extra !== "object") return "";
-  return Object.entries(extra)
-    .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`)
-    .join("\n");
-}
-
-/**
- * Scores jobs in the list that have no score, up to `budget` AI calls. Uses the description, or the Airtable
- * notes when fetching the description was tried and failed.
- */
-export async function scoreUnscoredJobs(
-  db: Db,
-  profile: SearchProfile,
-  budget: number,
-): Promise<{ scored: number; errors: string[] }> {
-  const unscored = db
-    .select()
-    .from(jobs)
-    .where(
-      and(
-        isNull(jobs.matchScore),
-        or(isNotNull(jobs.description), and(isNotNull(jobs.descriptionError), isNotNull(jobs.extra))),
-      ),
-    )
-    .limit(budget)
-    .all();
-  let scored = 0;
-  const errors: string[] = [];
-  for (const job of unscored) {
-    try {
-      await scoreAndStore(db, profile, job);
-      scored++;
-    } catch (err) {
-      errors.push(`Scoring #${job.id}: ${(err as Error).message.split("\n")[0]}`);
-    }
-  }
-  return { scored, errors };
-}
-
-/** Scores one job now, e.g. after its description was pasted. Throws on AI errors. */
-export async function rescoreJob(db: Db, id: number): Promise<void> {
-  const job = db.select().from(jobs).where(eq(jobs.id, id)).get();
-  if (job) await scoreAndStore(db, getSearchProfile(db), job);
-}
-
-async function scoreAndStore(db: Db, profile: SearchProfile, job: typeof jobs.$inferSelect) {
-  const { score, analysis } = await scoreJob({
-    profile: profile.about,
-    title: job.title,
-    company: job.company,
-    location: job.location ?? undefined,
-    description: job.description ?? `(Full posting unavailable; notes from Airtable)\n${extraAsText(job.extra)}`,
-  });
-  db.update(jobs).set({ matchScore: score, analysis }).where(eq(jobs.id, job.id)).run();
 }
 
 /**
